@@ -108,7 +108,7 @@
         const AttendanceStatus = {
             PRESENT: 'Mevcut',
             ABSENT: 'Yok',
-            LEAVE: 'İzinli',
+            LEAVE: 'İzin', // Changed from 'İzinli'
             SICK: 'Rapor', 
             DUTY: 'Görev', 
             COURSE: 'Kurs',
@@ -339,7 +339,9 @@
                         ...r,
                         id: String(r.id),
                         personId: String(r.personId),
-                        date: normalizeDate(r.date)
+                        date: normalizeDate(r.date),
+                        // Migration: Normalize 'İzinli' to 'İzin' for old records
+                        status: r.status === 'İzinli' ? 'İzin' : r.status
                     }));
 
                     localData.setAttendance(formattedAtt);
@@ -610,7 +612,7 @@
             const [acForm, setAcForm] = useState({ id: null, model: '', cat: AircraftCategory.HELICOPTER, tail: 'OR-', city: 'Ankara' });
             
             // Personnel Form State
-            const [plForm, setPlForm] = useState({ id: null, name: '', role: Role.PILOT, city: 'Ankara', title: '', start: new Date().toLocaleDateString('en-CA') });
+            const [plForm, setPlForm] = useState({ id: null, name: '', role: Role.PILOT, city: 'Ankara', title: '', start: new Date().toLocaleDateString('en-CA'), unit: '' });
             const [manualTitle, setManualTitle] = useState(false);
 
             // Modals
@@ -630,6 +632,13 @@
                 setNotification(msg);
                 setTimeout(() => setNotification(null), 3000);
             };
+
+            const uniqueModels = useMemo(() => {
+                const models = [...new Set(acList.map(a => a.model))].filter(m => m && m.length > 1);
+                // Add YÖNETİM manually if not in list
+                if (!models.includes('YÖNETİM')) models.push('YÖNETİM');
+                return models.sort();
+            }, [acList]);
 
             const saveAc = async () => {
                 if (!acForm.model || !acForm.tail) return;
@@ -675,12 +684,12 @@
                 setLoading(true);
                 try {
                     let list = [...plList];
-                    const pData = { fullName: plForm.name, role: plForm.role, city: plForm.city, title: plForm.title, activeFrom: plForm.start };
+                    const pData = { fullName: plForm.name, role: plForm.role, city: plForm.city, title: plForm.title, activeFrom: plForm.start, unit: plForm.unit };
                     if (plForm.id) list = list.map(x => x.id === plForm.id ? { ...x, ...pData } : x);
                     else list.push({ id: Date.now().toString(), ...pData, rank: (Math.max(...list.map(x => x.rank || 0), 0) + 1) });
                     await storageService.savePersonnel(list);
                     setPlList(list);
-                    setPlForm({ id: null, name: '', role: Role.PILOT, city: 'Ankara', title: '', start: new Date().toLocaleDateString('en-CA') });
+                    setPlForm({ id: null, name: '', role: Role.PILOT, city: 'Ankara', title: '', start: new Date().toLocaleDateString('en-CA'), unit: '' });
                     setManualTitle(false);
                     showNotify("Personel kaydedildi.");
                 } finally {
@@ -751,9 +760,9 @@
             };
 
             const exportPersonnelCsv = () => {
-                let csv = '\uFEFFSIRA;AD SOYAD;UNVAN;BÖLGE\n';
+                let csv = '\uFEFFSIRA;AD SOYAD;UNVAN;BİRİM;BÖLGE\n';
                 plList.forEach((p, i) => {
-                    csv += `${i + 1};"${p.fullName}";"${p.title || p.role}";"${p.city}"\n`;
+                    csv += `${i + 1};"${p.fullName}";"${p.title || p.role}";"${p.unit || ''}";"${p.city}"\n`;
                 });
                 const link = document.createElement('a');
                 link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
@@ -858,11 +867,16 @@
                                     
                                     {manualTitle && <input placeholder="Unvan Giriniz" className="w-full bg-forest-950 border border-forest-700 rounded p-2 text-white" value={plForm.title} onChange={e => setPlForm({ ...plForm, title: e.target.value })} />}
                                     
+                                    <select className="w-full bg-forest-950 border border-forest-700 rounded p-2 text-white" value={plForm.unit || ''} onChange={e => setPlForm({ ...plForm, unit: e.target.value })}>
+                                        <option value="">Birim / Uçak Seçimi (Otomatik/Genel)</option>
+                                        {uniqueModels.map(m => <option key={m} value={m}>{m}</option>)}
+                                    </select>
+
                                     <select className="w-full bg-forest-950 border border-forest-700 rounded p-2 text-white" value={plForm.city} onChange={e => setPlForm({ ...plForm, city: e.target.value })}>{CITIES.map(c => <option key={c}>{c}</option>)}</select>
                                     <input type="date" className="w-full bg-forest-950 border border-forest-700 rounded p-2 text-white" value={plForm.start} onChange={e => setPlForm({ ...plForm, start: e.target.value })} />
                                     <div className="flex gap-2">
                                         <Button onClick={savePl} className="flex-1">{plForm.id ? 'Güncelle' : 'Ekle'}</Button>
-                                        {plForm.id && <Button variant="secondary" onClick={() => { setPlForm({ id: null, name: '', role: Role.PILOT, city: 'Ankara', title: '', start: new Date().toLocaleDateString('en-CA') }); setManualTitle(false); }}>İptal</Button>}
+                                        {plForm.id && <Button variant="secondary" onClick={() => { setPlForm({ id: null, name: '', role: Role.PILOT, city: 'Ankara', title: '', start: new Date().toLocaleDateString('en-CA'), unit: '' }); setManualTitle(false); }}>İptal</Button>}
                                     </div>
                                 </div>
                             </Card>
@@ -872,13 +886,14 @@
                                  </div>
                                 <div className="overflow-auto max-h-[600px]">
                                     <table className="w-full text-sm text-forest-200">
-                                        <thead><tr className="text-left"><th className="p-2">Sıra</th><th className="p-2">Ad Soyad</th><th className="p-2">Unvan</th><th className="p-2">Bölge</th><th className="p-2 text-right">İşlem</th></tr></thead>
+                                        <thead><tr className="text-left"><th className="p-2">Sıra</th><th className="p-2">Ad Soyad</th><th className="p-2">Unvan</th><th className="p-2">Birim</th><th className="p-2">Bölge</th><th className="p-2 text-right">İşlem</th></tr></thead>
                                         <tbody>
                                             {plList.map((p, i) => (
-                                                <tr key={p.id} className={`border-b border-forest-700 hover:bg-forest-700/50 cursor-pointer ${p.activeUntil ? 'opacity-50' : ''}`} onDoubleClick={() => { setPlForm({ id: p.id, name: p.fullName, role: p.role, city: p.city, title: p.title || '', start: p.activeFrom || '' }); setManualTitle(!PERSONNEL_TITLES.includes(p.title || '')); }}>
+                                                <tr key={p.id} className={`border-b border-forest-700 hover:bg-forest-700/50 cursor-pointer ${p.activeUntil ? 'opacity-50' : ''}`} onDoubleClick={() => { setPlForm({ id: p.id, name: p.fullName, role: p.role, city: p.city, title: p.title || '', start: p.activeFrom || '', unit: p.unit || '' }); setManualTitle(!PERSONNEL_TITLES.includes(p.title || '')); }}>
                                                     <td className="p-2">{i + 1}</td>
                                                     <td className="p-2">{p.fullName}</td>
                                                     <td className="p-2 bg-forest-900/50"><span className="text-xs px-1 rounded bg-forest-800">{p.title || p.role}</span></td>
+                                                    <td className="p-2">{p.unit || '-'}</td>
                                                     <td className="p-2">{p.city}</td>
                                                     <td className="p-2 text-right flex justify-end gap-1">
                                                         <button onClick={(e) => { e.stopPropagation(); movePl(i, 'up') }}><ArrowUp size={14} /></button>
@@ -1027,10 +1042,19 @@
                         const mNameNormalized = m.replace(/[^a-zA-Z0-9ğüşıöçĞÜŞİÖÇ]/g, '').toLocaleUpperCase('tr-TR');
                         
                         const relevantPersonnel = finalPersonnel.filter(p => {
+                            // EXCLUDE MANAGEMENT NAMES FROM REGULAR AIRCRAFT LISTS
+                            if (YONETIM_NAMES.includes(p.fullName)) return false;
+
                             const pStart = p.activeFrom || '2000-01-01';
                             const pEnd = p.activeUntil || '2099-12-31';
                             if (today < pStart || today > pEnd) return false;
 
+                            // 1. PRIORITIZE EXPLICIT UNIT ASSIGNMENT
+                            if (p.unit) {
+                                return p.unit === m;
+                            }
+
+                            // 2. FALLBACK TO TITLE/ROLE MATCHING
                             const titleUpper = (p.title || '').toLocaleUpperCase('tr-TR');
                             const role = p.role;
                             const tClean = titleUpper.replace(/[^a-zA-Z0-9ğüşıöçĞÜŞİÖÇ]/g, '');
@@ -1124,12 +1148,21 @@
                         .map(m => m.replace(/[^a-zA-Z0-9ğüşıöçĞÜŞİÖÇ]/g, '').toLocaleUpperCase('tr-TR'));
 
                     const targetP = allPersonnel.filter(p => {
+                        // EXCLUDE MANAGEMENT NAMES FROM REGULAR AIRCRAFT LISTS
+                        if (YONETIM_NAMES.includes(p.fullName)) return false;
+
                         const pStart = p.activeFrom || '2000-01-01';
                         const pEnd = p.activeUntil || '2099-12-31';
                         const isActiveInRange = pStart <= rangeEndDate && pEnd >= rangeStartDate;
                         
                         if (!isActiveInRange) return false;
 
+                        // 1. PRIORITIZE EXPLICIT UNIT ASSIGNMENT
+                        if (p.unit) {
+                            return p.unit === selModel;
+                        }
+
+                        // 2. FALLBACK TO TITLE/ROLE MATCHING
                         const titleUpper = (p.title || '').toLocaleUpperCase('tr-TR');
                         const role = p.role;
                         const tClean = titleUpper.replace(/[^a-zA-Z0-9ğüşıöçĞÜŞİÖÇ]/g, '');
@@ -1584,6 +1617,9 @@
                          targetP = targetP.filter(p => YONETIM_NAMES.includes(p.fullName));
                     } else if (reportUnit !== 'TÜM BİRİMLER') {
                         targetP = targetP.filter(p => {
+                             // EXCLUDE MANAGEMENT NAMES FROM SPECIFIC AIRCRAFT REPORTS
+                             if (YONETIM_NAMES.includes(p.fullName)) return false;
+
                              const titleUpper = (p.title || '').toLocaleUpperCase('tr-TR');
                              const tClean = titleUpper.replace(/[^a-zA-Z0-9ğüşıöçĞÜŞİÖÇ]/g, '');
                              const belongsToSpecificAircraft = specificAircraftTags.some(tag => tClean.includes(tag));
