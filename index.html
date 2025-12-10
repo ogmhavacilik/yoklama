@@ -61,8 +61,8 @@
     "react-dom": "https://esm.sh/react-dom@18.2.0",
     "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
     "lucide-react": "https://esm.sh/lucide-react@0.292.0",
-    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
-    "react/": "https://aistudiocdn.com/react@^19.2.0/"
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.1/",
+    "react/": "https://aistudiocdn.com/react@^19.2.1/"
   }
 }
 </script>
@@ -94,7 +94,8 @@
             C_650: 'C-650',
             B_360: 'B-360',
             T_70: 'T-70',
-            YER_DESTEK: 'TEKNİK EKİP VE DESTEK'
+            TEKNIK_EKIP: 'TEKNİK EKİP',
+            YER_DESTEK: 'YER DESTEK'
         };
 
         const AircraftCategory = {
@@ -168,7 +169,8 @@
             { id: '21', tailNumber: 'OR-2028', model: AircraftModel.AT_802, category: AircraftCategory.PLANE, city: 'Ankara' },
             { id: '22', tailNumber: 'OR-2029', model: AircraftModel.AT_802, category: AircraftCategory.PLANE, city: 'Ankara' },
             { id: '23', tailNumber: 'OR-2037', model: AircraftModel.AT_802, category: AircraftCategory.PLANE, city: 'Ankara' },
-            { id: '24', tailNumber: 'MERKEZ', model: AircraftModel.YER_DESTEK, category: AircraftCategory.GROUND, city: 'Ankara' },
+            { id: '24', tailNumber: 'MERKEZ', model: AircraftModel.TEKNIK_EKIP, category: AircraftCategory.TECHNICAL, city: 'Ankara' },
+            { id: '25', tailNumber: 'DESTEK', model: AircraftModel.YER_DESTEK, category: AircraftCategory.GROUND, city: 'Ankara' },
         ];
 
         const INITIAL_PERSONNEL = [
@@ -433,7 +435,8 @@
         } = LucideIcons;
 
         const ModelIcon = ({ category, model, className }) => {
-            // FIXED: Removed special complex icon for YER_DESTEK to equalize box sizes
+            if (model === AircraftModel.YER_DESTEK) return <Truck className={className} />;
+            if (model === AircraftModel.TEKNIK_EKIP) return <Wrench className={className} />;
             if (category === AircraftCategory.HELICOPTER) return <Fan className={className} />;
             if (category === AircraftCategory.GROUND) return <Truck className={className} />;
             if (category === AircraftCategory.TECHNICAL) return <Wrench className={className} />;
@@ -976,8 +979,31 @@
                     ])
                 ]);
 
-                setInv(ac);
-                const uniqueModels = [...new Set(ac.map(a => a.model))].filter(m => m && m.length > 1 && m !== 'e').sort();
+                // DATA MIGRATION: Remove old combined unit and ensure new ones exist
+                let updatedAc = [...ac];
+                const oldUnitIndex = updatedAc.findIndex(a => a.model === 'TEKNİK EKİP VE DESTEK');
+                let modified = false;
+                
+                if (oldUnitIndex !== -1) {
+                    updatedAc.splice(oldUnitIndex, 1);
+                    modified = true;
+                }
+                
+                if (!updatedAc.find(a => a.model === AircraftModel.TEKNIK_EKIP)) {
+                    updatedAc.push({ id: '24', tailNumber: 'MERKEZ', model: AircraftModel.TEKNIK_EKIP, category: AircraftCategory.TECHNICAL, city: 'Ankara' });
+                    modified = true;
+                }
+                if (!updatedAc.find(a => a.model === AircraftModel.YER_DESTEK)) {
+                    updatedAc.push({ id: '25', tailNumber: 'DESTEK', model: AircraftModel.YER_DESTEK, category: AircraftCategory.GROUND, city: 'Ankara' });
+                    modified = true;
+                }
+
+                if (modified) {
+                    storageService.saveAircraft(updatedAc);
+                }
+
+                setInv(updatedAc);
+                const uniqueModels = [...new Set(updatedAc.map(a => a.model))].filter(m => m && m.length > 1 && m !== 'e').sort();
                 setModels(uniqueModels);
                 setAllPersonnel(syncedPl || pl);
                 setAllRecs(recs || []);
@@ -988,7 +1014,7 @@
                     const today = getTodayString();
                     
                     const specificAircraftTags = uniqueModels
-                        .filter(m => m !== AircraftModel.YER_DESTEK)
+                        .filter(m => m !== AircraftModel.YER_DESTEK && m !== AircraftModel.TEKNIK_EKIP)
                         .map(m => m.replace(/[^a-zA-Z0-9ğüşıöçĞÜŞİÖÇ]/g, '').toLocaleUpperCase('tr-TR'));
 
                     uniqueModels.forEach(m => {
@@ -1006,10 +1032,18 @@
                             const belongsToSpecificAircraft = specificAircraftTags.some(tag => tClean.includes(tag));
 
                             if (m === AircraftModel.YER_DESTEK) {
+                                if (p.fullName.includes('SERKAN KOTAN')) return true; // Force include SERKAN KOTAN
                                 if (belongsToSpecificAircraft) return false; 
+                                const isTechnicalRole = titleUpper.includes('UÇAK TEKNİ') || titleUpper.includes('MÜHENDİS');
+                                if (isTechnicalRole) return false;
+
                                 const isGroundRole = [Role.DRIVER, Role.CLEANING, Role.KITCHEN, Role.TEA_SERVICE, Role.OTHER].includes(role);
-                                const isGroundTitle = titleUpper.includes('MEMUR') || titleUpper.includes('İŞÇİ') || titleUpper.includes('MÜHENDİS') || titleUpper.includes('ŞÖFÖR') || titleUpper.includes('UÇAK TEKNİSYEN') || titleUpper.includes('UÇAK TEKNİKER');
+                                const isGroundTitle = titleUpper.includes('MEMUR') || titleUpper.includes('İŞÇİ') || titleUpper.includes('ŞÖFÖR');
                                 return isGroundRole || isGroundTitle;
+                            } else if (m === AircraftModel.TEKNIK_EKIP) {
+                                if (p.fullName.includes('SERKAN KOTAN')) return false; // Force exclude SERKAN KOTAN
+                                if (belongsToSpecificAircraft) return false;
+                                return titleUpper.includes('UÇAK TEKNİ') || titleUpper.includes('MÜHENDİS');
                             } else {
                                 return tClean.includes(mNameNormalized);
                             }
@@ -1023,10 +1057,11 @@
                         const groundDataExists = relevantPersonnel.length > 0 && relevantPersonnel.some(p => (recs || []).some(r => r.date === today && r.personId === p.id));
 
                         const isGroundUnit = m === AircraftModel.YER_DESTEK;
+                        const isTechnicalUnit = m === AircraftModel.TEKNIK_EKIP;
 
                         statusMap[m] = {
-                            pilotMissing: !isGroundUnit && pilots.length > 0 && !pilotDataExists,
-                            techMissing: !isGroundUnit && techs.length > 0 && !techDataExists,
+                            pilotMissing: !isGroundUnit && !isTechnicalUnit && pilots.length > 0 && !pilotDataExists,
+                            techMissing: (!isGroundUnit && techs.length > 0 && !techDataExists) || (isTechnicalUnit && !techDataExists),
                             groundMissing: isGroundUnit && !groundDataExists
                         };
                     });
@@ -1079,7 +1114,7 @@
                     }
 
                     const specificAircraftTags = models
-                        .filter(m => m !== AircraftModel.YER_DESTEK)
+                        .filter(m => m !== AircraftModel.YER_DESTEK && m !== AircraftModel.TEKNIK_EKIP)
                         .map(m => m.replace(/[^a-zA-Z0-9ğüşıöçĞÜŞİÖÇ]/g, '').toLocaleUpperCase('tr-TR'));
 
                     const targetP = allPersonnel.filter(p => {
@@ -1096,10 +1131,19 @@
                         const belongsToSpecificAircraft = specificAircraftTags.some(tag => tClean.includes(tag));
 
                         if (selModel === AircraftModel.YER_DESTEK) {
+                            if (p.fullName.includes('SERKAN KOTAN')) return true; // Force include SERKAN KOTAN
                             if (belongsToSpecificAircraft) return false;
+                            
+                            const isTechnicalRole = titleUpper.includes('UÇAK TEKNİ') || titleUpper.includes('MÜHENDİS');
+                            if (isTechnicalRole) return false;
+
                             const isGroundRole = [Role.DRIVER, Role.CLEANING, Role.KITCHEN, Role.TEA_SERVICE, Role.OTHER].includes(role);
-                            const isGroundTitle = titleUpper.includes('MEMUR') || titleUpper.includes('İŞÇİ') || titleUpper.includes('MÜHENDİS') || titleUpper.includes('ŞÖFÖR') || titleUpper.includes('UÇAK TEKNİSYEN') || titleUpper.includes('UÇAK TEKNİKER');
+                            const isGroundTitle = titleUpper.includes('MEMUR') || titleUpper.includes('İŞÇİ') || titleUpper.includes('ŞÖFÖR');
                             return isGroundRole || isGroundTitle;
+                        } else if (selModel === AircraftModel.TEKNIK_EKIP) {
+                            if (p.fullName.includes('SERKAN KOTAN')) return false; // Force exclude SERKAN KOTAN
+                            if (belongsToSpecificAircraft) return false;
+                            return titleUpper.includes('UÇAK TEKNİ') || titleUpper.includes('MÜHENDİS');
                         } else {
                             const mNameNormalized = selModel.replace(/[^a-zA-Z0-9ğüşıöçĞÜŞİÖÇ]/g, '').toLocaleUpperCase('tr-TR');
                             return tClean.includes(mNameNormalized);
@@ -1474,7 +1518,7 @@
                     const uniqueModels = [...new Set((await storageService.getAircraft()).map(a => a.model))].filter(m => m && m.length > 1 && m !== 'e').sort();
 
                     const specificAircraftTags = uniqueModels
-                        .filter(m => m !== AircraftModel.YER_DESTEK)
+                        .filter(m => m !== AircraftModel.YER_DESTEK && m !== AircraftModel.TEKNIK_EKIP)
                         .map(m => m.replace(/[^a-zA-Z0-9ğüşıöçĞÜŞİÖÇ]/g, '').toLocaleUpperCase('tr-TR'));
 
                     let targetP = finalPersonnel.filter(p => p.role !== Role.PILOT).sort((a, b) => (a.rank || 999) - (b.rank || 999));
@@ -1497,11 +1541,20 @@
                              const belongsToSpecificAircraft = specificAircraftTags.some(tag => tClean.includes(tag));
 
                              if (reportUnit === AircraftModel.YER_DESTEK) {
+                                 if (p.fullName.includes('SERKAN KOTAN')) return true; // Force include SERKAN KOTAN
                                  if (belongsToSpecificAircraft) return false;
+                                 
+                                 const isTechnicalRole = titleUpper.includes('UÇAK TEKNİ') || titleUpper.includes('MÜHENDİS');
+                                 if (isTechnicalRole) return false;
+
                                  const role = p.role;
                                  const isGroundRole = [Role.DRIVER, Role.CLEANING, Role.KITCHEN, Role.TEA_SERVICE, Role.OTHER].includes(role);
-                                 const isGroundTitle = titleUpper.includes('MEMUR') || titleUpper.includes('İŞÇİ') || titleUpper.includes('MÜHENDİS') || titleUpper.includes('ŞÖFÖR') || titleUpper.includes('UÇAK TEKNİSYEN') || titleUpper.includes('UÇAK TEKNİKER');
+                                 const isGroundTitle = titleUpper.includes('MEMUR') || titleUpper.includes('İŞÇİ') || titleUpper.includes('ŞÖFÖR');
                                  return isGroundRole || isGroundTitle;
+                             } else if (reportUnit === AircraftModel.TEKNIK_EKIP) {
+                                 if (p.fullName.includes('SERKAN KOTAN')) return false; // Force exclude SERKAN KOTAN
+                                 if (belongsToSpecificAircraft) return false;
+                                 return titleUpper.includes('UÇAK TEKNİ') || titleUpper.includes('MÜHENDİS');
                              } else {
                                  const mNameNormalized = reportUnit.replace(/[^a-zA-Z0-9ğüşıöçĞÜŞİÖÇ]/g, '').toLocaleUpperCase('tr-TR');
                                  return tClean.includes(mNameNormalized);
