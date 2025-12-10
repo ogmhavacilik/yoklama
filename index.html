@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="tr">
 <head>
     <meta charset="UTF-8" />
@@ -108,11 +108,11 @@
             PRESENT: 'Mevcut',
             ABSENT: 'Yok',
             LEAVE: 'İzinli',
-            SICK: 'Rapor', // Changed from Raporlu
-            DUTY: 'Görev', // Changed from Görevde
+            SICK: 'Rapor', 
+            DUTY: 'Görev', 
             COURSE: 'Kurs',
             HOSPITAL: 'Hastane',
-            PUBLIC_HOLIDAY: 'İdari İzin', // Changed from Resmi Tatil
+            PUBLIC_HOLIDAY: 'İdari İzin', 
             OTHER: 'Diğer'
         };
 
@@ -433,15 +433,7 @@
         } = LucideIcons;
 
         const ModelIcon = ({ category, model, className }) => {
-            if (model === AircraftModel.YER_DESTEK) {
-                return (
-                    <div className={`relative flex items-center justify-center ${className}`} style={{ width: 48, height: 48 }}>
-                        <Plane size={24} className="absolute top-0 left-0" />
-                        <Fan size={20} className="absolute bottom-0 right-1" />
-                        <Settings size={18} className="absolute top-0 right-0 opacity-70" />
-                    </div>
-                );
-            }
+            // FIXED: Removed special complex icon for YER_DESTEK to equalize box sizes
             if (category === AircraftCategory.HELICOPTER) return <Fan className={className} />;
             if (category === AircraftCategory.GROUND) return <Truck className={className} />;
             if (category === AircraftCategory.TECHNICAL) return <Wrench className={className} />;
@@ -1038,6 +1030,12 @@
                             groundMissing: isGroundUnit && !groundDataExists
                         };
                     });
+
+                    // Check YONETIM Status
+                    const yonetimMembers = finalPersonnel.filter(p => YONETIM_NAMES.includes(p.fullName));
+                    const yonetimHasData = yonetimMembers.some(p => (recs || []).some(r => r.date === today && r.personId === p.id));
+                    statusMap['YÖNETİM'] = { missing: !yonetimHasData && yonetimMembers.length > 0 };
+
                     setDashboardStatus(statusMap);
                 }
             }, []);
@@ -1627,7 +1625,7 @@
                     html += '<tr>';
                     html += `<td colspan="3" ${headerStyle}>${monthName}</td>`; // Month/Year
                     days.forEach(d => {
-                         html += `<td ${headerStyle}>${d.getDate()}</td>`;
+                         html += `<td ${headerStyle}>${d.getDate()}.${d.getMonth()+1}.${d.getFullYear()}</td>`;
                     });
                     
                     cols.forEach(c => {
@@ -1638,9 +1636,10 @@
 
                     // Sub Header Row
                     html += '<tr>';
-                    html += `<td colspan="3" ${headerStyle}>AD SOYADI</td>`;
+                    html += `<td ${headerStyle}>SIRA</td>`;
+                    html += `<td colspan="2" ${headerStyle}>AD SOYADI</td>`;
                     days.forEach(d => {
-                        html += `<td ${headerStyle}>${d.toLocaleDateString('tr-TR', { weekday: isDaily ? 'long' : 'short' })}</td>`;
+                        html += `<td ${headerStyle}>${d.toLocaleDateString('tr-TR', { weekday: 'long' }).toLocaleUpperCase('tr-TR')}</td>`;
                     });
                     cols.forEach(c => {
                         if (colStats[c.key] > 0) html += `<td ${headerStyle}></td>`; // Empty below stat headers
@@ -1651,7 +1650,8 @@
                     // --- DATA ROWS ---
                     targetP.forEach((p, i) => {
                         html += '<tr>';
-                        html += `<td colspan="3" ${nameStyle}>${p.fullName}</td>`; // Name merged
+                        html += `<td ${cellStyle}>${i + 1}</td>`; // Sequence
+                        html += `<td colspan="2" ${nameStyle}>${p.fullName}</td>`; // Name merged
                         
                         let s = { w: 0, gp: 0, gu: 0, ht: 0, yi: 0, mi: 0, gi: 0, ygi: 0, fmi: 0, yfmi: 0, rt: 0, r: 0, h: 0, k: 0, ot: 0 };
                         let currentFmiBlock = 0;
@@ -1739,7 +1739,24 @@
                         html += '</tr>';
                     });
 
-                    html += '</table></body></html>';
+                    // Add Legend
+                    html += '<br/>';
+                    html += '<table border="1" style="border-collapse: collapse; width: 50%;">';
+                    html += `<tr><td colspan="2" ${headerStyle}>KISALTMALAR VE AÇIKLAMALARI</td></tr>`;
+                    html += `<tr><td ${cellStyle}>G.İ</td><td ${nameStyle}>GÜNLÜK İZİN</td></tr>`;
+                    html += `<tr><td ${cellStyle}>F.M.İ</td><td ${nameStyle}>FAZLA MESAİ İZNİ</td></tr>`;
+                    html += `<tr><td ${cellStyle}>Y.F.M.İ</td><td ${nameStyle}>YARIM GÜN FAZLA MESAİ İZNİ</td></tr>`;
+                    html += `<tr><td ${cellStyle}>Yİ</td><td ${nameStyle}>YILLIK İZİN</td></tr>`;
+                    html += `<tr><td ${cellStyle}>M.İ</td><td ${nameStyle}>MAZERET İZNİ</td></tr>`;
+                    html += `<tr><td ${cellStyle}>Y.G.İ</td><td ${nameStyle}>YARIM GÜN İZİN</td></tr>`;
+                    html += `<tr><td ${cellStyle}>R</td><td ${nameStyle}>RAPOR</td></tr>`;
+                    html += `<tr><td ${cellStyle}>H</td><td ${nameStyle}>HASTANE</td></tr>`;
+                    html += `<tr><td ${cellStyle}>KURS</td><td ${nameStyle}>KURS</td></tr>`;
+                    html += `<tr><td ${cellStyle}>İ.İ.</td><td ${nameStyle}>İDARİ İZİN</td></tr>`;
+                    html += `<tr><td ${cellStyle}>GÖREV</td><td ${nameStyle}>GÖREVDE</td></tr>`;
+                    html += '</table>';
+
+                    html += '</body></html>';
 
                     const blob = new Blob([html], { type: 'application/vnd.ms-excel' });
                     const link = document.createElement('a');
@@ -1834,10 +1851,20 @@
                     <Card title="Birim Seçiniz">
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                             {/* YONETIM BUTTON */}
-                            <button onClick={() => setSelModel('YÖNETİM')} className="p-6 rounded border-2 font-bold flex flex-col items-center transition-all group relative overflow-hidden bg-forest-800 border-forest-600 hover:bg-forest-700 text-white">
-                                <Users size={32} className="mb-2" />
-                                YÖNETİM
-                            </button>
+                            {(() => {
+                                const yonetimStat = dashboardStatus['YÖNETİM'] || { missing: true };
+                                return (
+                                    <button onClick={() => setSelModel('YÖNETİM')} className={`p-6 rounded border-2 font-bold flex flex-col items-center transition-all group relative overflow-hidden ${
+                                        !yonetimStat.missing
+                                        ? 'bg-teal-600 border-teal-400 hover:bg-teal-500 text-white'
+                                        : 'bg-forest-800 border-red-500 text-white shadow-[inset_0_0_10px_rgba(220,38,38,0.5)]'
+                                    }`}>
+                                        <Users size={32} className="mb-2" />
+                                        YÖNETİM
+                                        {yonetimStat.missing && <span className="text-[10px] bg-red-600 px-2 py-0.5 rounded mt-2 animate-pulse w-full block">GÜNLÜK YOKLAMA GİRİLMEDİ</span>}
+                                    </button>
+                                );
+                            })()}
 
                             {models.map(m => {
                                 const stat = dashboardStatus[m] || { pilotMissing: false, techMissing: false, groundMissing: false };
