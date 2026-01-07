@@ -76,7 +76,7 @@
         import { createRoot } from 'react-dom/client';
         import * as LucideIcons from 'lucide-react';
 
-        // --- TYPES (Converted to JS Objects/Constants for Runtime) ---
+        // --- TYPES ---
         const Role = {
             PILOT: 'Pilot',
             TECHNICIAN: 'Teknisyen',
@@ -96,7 +96,8 @@
             B_360: 'B-360',
             T_70: 'T-70',
             TEKNIK_EKIP: 'TEKNİK EKİP',
-            YER_DESTEK: 'YER DESTEK'
+            YER_DESTEK: 'YER DESTEK',
+            IDARI_BIRIM: 'İDARİ BİRİM'
         };
 
         const AircraftCategory = {
@@ -109,7 +110,7 @@
         const AttendanceStatus = {
             PRESENT: 'Mevcut',
             ABSENT: 'Yok',
-            LEAVE: 'İzin', // Changed from 'İzinli'
+            LEAVE: 'İzin', 
             SICK: 'Rapor', 
             DUTY: 'Görev', 
             COURSE: 'Kurs',
@@ -134,7 +135,6 @@
 
         const YONETIM_NAMES = ["MEHMET SEFA YÜCEDAĞ", "TEZCAN GÜZER", "ALPER ÖZMETİN" ,"MURAT AKMEŞE"];
 
-        // --- CONSTANTS ---
         const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyACGqG_z19PvzYcjUBvdhj0brUa0t-Y4D5Q_XEpxGFJ3S9yPkaUgq_Psk7pakrSBrh/exec"; 
 
         const CITIES = ['Adana', 'Adıyaman', 'Afyonkarahisar', 'Ağrı', 'Amasya', 'Ankara', 'Antalya', 'Artvin', 'Aydın', 'Balıkesir', 'Bilecik', 'Bingöl', 'Bitlis', 'Bolu', 'Burdur', 'Bursa', 'Çanakkale', 'Çankırı', 'Çorum', 'Denizli', 'Diyarbakır', 'Edirne', 'Elazığ', 'Erzincan', 'Erzurum', 'Eskişehir', 'Gaziantep', 'Giresun', 'Gümüşhane', 'Hakkari', 'Hatay', 'Isparta', 'Mersin', 'İstanbul', 'İzmir', 'Kars', 'Kastamonu', 'Kayseri', 'Kırklareli', 'Kırşehir', 'Kocaeli', 'Konya', 'Kütahya', 'Malatya', 'Manisa', 'Kahramanmaraş', 'Mardin', 'Muğla', 'Muş', 'Nevşehir', 'Niğde', 'Ordu', 'Rize', 'Sakarya', 'Samsun', 'Siirt', 'Sinop', 'Sivas', 'Tekirdağ', 'Tokat', 'Trabzon', 'Tunceli', 'Şanlıurfa', 'Uşak', 'Van', 'Yozgat', 'Zonguldak', 'Aksaray', 'Bayburt', 'Karaman', 'Kırıkkale', 'Batman', 'Şırnak', 'Bartın', 'Ardahan', 'Iğdır', 'Yalova', 'Karabük', 'Kilis', 'Osmaniye', 'Düzce', 'YURT DIŞI'];
@@ -320,17 +320,12 @@
                     }
                     if (data.personnel) {
                         let formattedPL = data.personnel.map(p => ({ ...p, id: String(p.id) }));
-                        
-                        // MERGE LOGIC: Add missing INITIAL_PERSONNEL
                         INITIAL_PERSONNEL.forEach(initP => {
                             if (!formattedPL.some(p => p.id === initP.id)) {
                                 formattedPL.push(initP);
                             }
                         });
-
-                        // Sort by rank
                         formattedPL.sort((a, b) => (a.rank || 999) - (b.rank || 999));
-
                         localData.savePersonnel(formattedPL);
                         memoryCache.personnel = formattedPL;
                     }
@@ -341,7 +336,6 @@
                         id: String(r.id),
                         personId: String(r.personId),
                         date: normalizeDate(r.date),
-                        // Migration: Normalize 'İzinli' to 'İzin' for old records
                         status: r.status === 'İzinli' ? 'İzin' : r.status
                     }));
 
@@ -434,7 +428,7 @@
             Trash2, XCircle, ArrowUp, ArrowDown, UserMinus, MapPin, Search, 
             AlertCircle, Users, Globe, Calendar, MessageSquare, CheckCircle, 
             BarChart3, Activity, FileText, Loader2, Plus, Edit2, MoreVertical, 
-            CalendarDays, Lock 
+            CalendarDays, Lock, BookOpen
         } = LucideIcons;
 
         const ModelIcon = ({ category, model, className }) => {
@@ -460,7 +454,7 @@
                         <button onClick={() => onChangeStatus(personId, AttendanceStatus.DUTY)} className={`px-3 py-1.5 text-xs sm:text-sm border rounded-md transition-all flex-grow sm:flex-grow-0 ${status === AttendanceStatus.DUTY ? 'bg-blue-600 border-blue-500 text-white' : 'bg-forest-900 border-forest-700 text-forest-400 hover:border-forest-500'}`}>
                             Görev
                         </button>
-                         <button onClick={() => onChangeStatus(personId, AttendanceStatus.COURSE)} className={`px-3 py-1.5 text-xs sm:text-sm border rounded-md transition-all flex-grow sm:flex-grow-0 ${status === AttendanceStatus.COURSE ? 'bg-blue-600 border-blue-500 text-white' : 'bg-forest-900 border-forest-700 text-forest-400 hover:border-forest-500'}`}>
+                         <button onClick={() => onChangeStatus(personId, AttendanceStatus.COURSE)} className={`px-3 py-1.5 text-xs sm:text-sm border rounded-md transition-all flex-grow sm:flex-grow-0 ${status === AttendanceStatus.COURSE ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-forest-900 border-forest-700 text-forest-400 hover:border-forest-500'}`}>
                             Kurs
                         </button>
 
@@ -551,17 +545,15 @@
 
                     {status === AttendanceStatus.COURSE && (
                         <div className="w-full flex flex-col gap-2 animate-fade-in bg-forest-900/50 p-2 rounded border border-indigo-500/30">
-                            <div className="flex items-center gap-4 text-xs text-forest-300 px-1">
-                                <label className="flex items-center gap-1 cursor-pointer"><input type="radio" checked={!state?.isInt} onChange={() => onChangeDetail(personId, 'isInt', false)} className="accent-forest-500" /> Yurt İçi</label>
-                                <label className="flex items-center gap-1 cursor-pointer"><input type="radio" checked={!!state?.isInt} onChange={() => onChangeDetail(personId, 'isInt', true)} className="accent-forest-500" /> Yurt Dışı</label>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <Globe size={16} className="text-indigo-400 flex-shrink-0" />
-                                {!state?.isInt ? (
-                                    <select className="bg-forest-800 border border-forest-600 text-white text-xs rounded p-1.5 w-full focus:ring-indigo-500 focus:border-indigo-500" value={CITIES.includes(state?.dutyLocation || '') ? state?.dutyLocation : ''} onChange={(e) => onChangeDetail(personId, 'dutyLocation', e.target.value)}><option value="" disabled>İl Seçiniz</option>{CITIES.map(c => <option key={c} value={c}>{c}</option>)}</select>
-                                ) : (
-                                    <input type="text" placeholder="Ülke / Şehir" className="bg-forest-800 border border-forest-600 text-white text-xs rounded p-1.5 w-full focus:ring-indigo-500 focus:border-indigo-500" value={state?.dutyLocation || ''} onChange={(e) => onChangeDetail(personId, 'dutyLocation', e.target.value)} />
-                                )}
+                            <div className="flex items-center gap-2 p-1">
+                                <LucideIcons.BookOpen size={16} className="text-indigo-400 flex-shrink-0" />
+                                <input 
+                                    type="text" 
+                                    placeholder="Kurs Adını Yazınız..." 
+                                    className="bg-forest-800 border border-forest-600 text-white text-xs rounded p-1.5 w-full focus:ring-indigo-500 focus:border-indigo-500 focus:outline-none" 
+                                    value={state?.dutyLocation || ''} 
+                                    onChange={(e) => onChangeDetail(personId, 'dutyLocation', e.target.value)} 
+                                />
                             </div>
                         </div>
                     )}
@@ -1036,7 +1028,7 @@
                     const today = getTodayString();
                     
                     const specificAircraftTags = uniqueModels
-                        .filter(m => m !== AircraftModel.YER_DESTEK && m !== AircraftModel.TEKNIK_EKIP)
+                        .filter(m => m !== AircraftModel.YER_DESTEK && m !== AircraftModel.TEKNIK_EKIP && m !== AircraftModel.IDARI_BIRIM)
                         .map(m => m.replace(/[^a-zA-Z0-9ğüşıöçĞÜŞİÖÇ]/g, '').toLocaleUpperCase('tr-TR'));
 
                     uniqueModels.forEach(m => {
@@ -1145,7 +1137,7 @@
                     }
 
                     const specificAircraftTags = models
-                        .filter(m => m !== AircraftModel.YER_DESTEK && m !== AircraftModel.TEKNIK_EKIP)
+                        .filter(m => m !== AircraftModel.YER_DESTEK && m !== AircraftModel.TEKNIK_EKIP && m !== AircraftModel.IDARI_BIRIM)
                         .map(m => m.replace(/[^a-zA-Z0-9ğüşıöçĞÜŞİÖÇ]/g, '').toLocaleUpperCase('tr-TR'));
 
                     const targetP = allPersonnel.filter(p => {
@@ -1217,7 +1209,7 @@
                          const dayOfWeek = current.getDay();
                          const diffToSat = 6 - dayOfWeek; // Days until Saturday
                          const satDate = new Date(current);
-                         satDate.setDate(current.getDate() + diffToSat);
+                         satDate.setDate(current.getDate() + dayOfWeek === 0 ? current.getDate()-1 : current.getDate() + (6 - dayOfWeek));
                          const satStr = normalizeDate(satDate);
                          
                          const satRec = allRecs.find(x => x.personId === p.id && x.date === satStr);
@@ -1461,7 +1453,7 @@
                         ...prev[pid], 
                         status, 
                         dutyType: status === AttendanceStatus.DUTY ? (prev[pid]?.dutyType || DutyType.PLANNED) : undefined,
-                        dutyLocation: (status === AttendanceStatus.DUTY || status === AttendanceStatus.COURSE) ? (prev[pid]?.dutyLocation || 'Ankara') : undefined 
+                        dutyLocation: (status === AttendanceStatus.DUTY || status === AttendanceStatus.COURSE) ? (prev[pid]?.dutyLocation || '') : undefined 
                     } 
                 }));
             };
@@ -1559,7 +1551,7 @@
                     [dateStr]: {
                         ...prev[dateStr],
                         status,
-                        dutyLocation: (status === AttendanceStatus.DUTY || status === AttendanceStatus.COURSE) ? (prev[dateStr]?.dutyLocation || 'Ankara') : undefined,
+                        dutyLocation: (status === AttendanceStatus.DUTY || status === AttendanceStatus.COURSE) ? (prev[dateStr]?.dutyLocation || '') : undefined,
                         dutyType: status === AttendanceStatus.DUTY ? (prev[dateStr]?.dutyType || DutyType.PLANNED) : undefined,
                         leaveType: status === AttendanceStatus.LEAVE ? (prev[dateStr]?.leaveType || LeaveType.DAILY) : undefined
                     }
@@ -1619,7 +1611,7 @@
                         .filter(m => m !== AircraftModel.YER_DESTEK && m !== AircraftModel.TEKNIK_EKIP && m !== AircraftModel.IDARI_BIRIM)
                         .map(m => m.replace(/[^a-zA-Z0-9ğüşıöçĞÜŞİÖÇ]/g, '').toLocaleUpperCase('tr-TR'));
 
-                    let targetP = finalPersonnel.filter(p => p.role !== Role.PİLOT).sort((a, b) => (a.rank || 999) - (b.rank || 999));
+                    let targetP = finalPersonnel.filter(p => p.role !== Role.PILOT).sort((a, b) => (a.rank || 999) - (b.rank || 999));
 
                     const startDateForFilter = isDaily ? getTodayString() : dates.start;
                     const endDateForFilter = isDaily ? getTodayString() : dates.end;
@@ -1665,14 +1657,6 @@
                         targetP = targetP.filter(p => p.fullName.toLocaleUpperCase('tr-TR').includes(search));
                     }
 
-                    let html = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="UTF-8"><meta http-equiv="content-type" content="application/vnd.ms-excel; charset=UTF-8"></head><body>';
-                    html += '<table border="1" style="border-collapse: collapse;">';
-                    
-                    const headerStyle = 'style="background-color: #c6e0b4; font-weight: bold; text-align: center; border: 1px solid #000;"';
-                    const cellStyle = 'style="border: 1px solid #000; text-align: center;"';
-                    const cellStyleRedBold = 'style="border: 1px solid #000; text-align: center; color: #ff0000; font-weight: bold;"';
-                    const nameStyle = 'style="border: 1px solid #000; text-align: left;"';
-
                     let days = [];
                     if (isDaily) {
                         const [y,m,d] = getTodayString().split('-').map(Number);
@@ -1688,50 +1672,68 @@
                         }
                     }
 
-                    const colStats = { w: 0, gp: 0, gu: 0, ht: 0, yi: 0, mi: 0, gi: 0, ygi: 0, fmi: 0, yfmi: 0, rt: 0, r: 0, h: 0, k: 0, ot: 0 };
-                    targetP.forEach(p => {
-                         days.forEach(d => {
+                    const allPossibleCols = [
+                        { key: 'w', label: 'X' },
+                        { key: 'gp', label: 'PLANLI' },
+                        { key: 'gu', label: 'PLANSIZ' },
+                        { key: 'ht', label: 'HT' },
+                        { key: 'yi', label: 'Yİ' },
+                        { key: 'mi', label: 'Mİ' },
+                        { key: 'gi', label: 'Gİ' },
+                        { key: 'ygi', label: 'YGİ' },
+                        { key: 'fmi', label: 'FMİ' },
+                        { key: 'yfmi', label: 'YFMİ' },
+                        { key: 'rt', label: 'İİ' },
+                        { key: 'r', label: 'R' },
+                        { key: 'h', label: 'H' },
+                        { key: 'k', label: 'K' },
+                        { key: 'ot', label: 'D' }
+                    ];
+
+                    const personStats = targetP.map(p => {
+                        let s = { w: 0, gp: 0, gu: 0, ht: 0, yi: 0, mi: 0, gi: 0, ygi: 0, fmi: 0, yfmi: 0, rt: 0, r: 0, h: 0, k: 0, ot: 0 };
+                        days.forEach(d => {
                             const dStr = normalizeDate(d);
                             const r = freshRecs.find(x => x.personId === p.id && x.date === dStr);
                             const isWe = d.getDay() === 0 || d.getDay() === 6;
-                            if (!(p.activeUntil && dStr > p.activeUntil) && !(p.activeFrom && dStr < p.activeFrom)) {
-                                if (r && r.status === AttendanceStatus.PRESENT) colStats.w++;
-                                if (!r && !isWe) colStats.w++;
-                                if (isWe && (!r || (r && r.status !== AttendanceStatus.PRESENT && r.status !== AttendanceStatus.DUTY))) colStats.ht++;
+                            let isExcluded = (p.activeUntil && dStr > p.activeUntil) || (p.activeFrom && dStr < p.activeFrom);
+                            if (!isExcluded) {
                                 if (r) {
-                                    if (r.status === AttendanceStatus.LEAVE) {
-                                        if (r.leaveType === LeaveType.ANNUAL) colStats.yi++;
-                                        else if (r.leaveType === LeaveType.EXCUSE) colStats.mi++;
-                                        else if (r.leaveType === LeaveType.DAILY) colStats.gi++;
-                                        else if (r.leaveType === LeaveType.HALF_DAY) colStats.ygi += 0.5;
-                                        else if (r.leaveType === LeaveType.HALF_OVERTIME) colStats.yfmi += 0.5;
-                                        else if (r.leaveType === LeaveType.OVERTIME) colStats.fmi++;
+                                    if (r.status === AttendanceStatus.PRESENT) { if (isWe) s.ht++; else s.w++; }
+                                    else if (r.status === AttendanceStatus.DUTY) { if (r.dutyType === DutyType.UNPLANNED) s.gu++; else s.gp++; }
+                                    else if (r.status === AttendanceStatus.COURSE) s.k++;
+                                    else if (r.status === AttendanceStatus.SICK) s.r++;
+                                    else if (r.status === AttendanceStatus.HOSPITAL) s.h++;
+                                    else if (r.status === AttendanceStatus.LEAVE) {
+                                        if (r.leaveType === LeaveType.ANNUAL) s.yi++;
+                                        else if (r.leaveType === LeaveType.EXCUSE) s.mi++;
+                                        else if (r.leaveType === LeaveType.DAILY) s.gi++;
+                                        else if (r.leaveType === LeaveType.HALF_DAY) s.ygi += 0.5;
+                                        else if (r.leaveType === LeaveType.HALF_OVERTIME) s.yfmi += 0.5;
+                                        else if (r.leaveType === LeaveType.OVERTIME) s.fmi++;
                                     }
-                                    if (r.status === AttendanceStatus.SICK) colStats.r++;
-                                    if (r.status === AttendanceStatus.HOSPITAL) colStats.h++;
-                                    if (r.status === AttendanceStatus.COURSE) colStats.k++;
-                                    if (r.status === AttendanceStatus.OTHER) colStats.ot++;
-                                    if (r.status === AttendanceStatus.PUBLIC_HOLIDAY) colStats.rt++;
-                                    if (r.status === AttendanceStatus.DUTY) {
-                                        if (r.dutyType === DutyType.UNPLANNED) colStats.gu++;
-                                        else colStats.gp++;
-                                    }
+                                    else if (r.status === AttendanceStatus.PUBLIC_HOLIDAY) s.rt++;
+                                    else if (r.status === AttendanceStatus.OTHER) s.ot++;
+                                } else {
+                                    if (isWe) s.ht++; else s.w++;
                                 }
                             }
-                         });
+                        });
+                        return { id: p.id, stats: s };
                     });
 
-                    const cols = [
-                        { key: 'w', label: 'MESAİ' },
-                        { key: 'gp', label: 'PLANLI' },
-                        { key: 'gu', label: 'PLANSIZ' },
-                        { key: 'ht', label: 'H.SONU' },
-                        { key: 'yi', label: 'İZİN' },
-                        { key: 'r', label: 'RAPOR' }
-                    ];
+                    const activeCols = allPossibleCols.filter(col => {
+                        return personStats.some(ps => ps.stats[col.key] > 0);
+                    });
 
-                    const headerDate = days[0];
-                    const monthName = headerDate.toLocaleDateString('tr-TR', { month: 'long', year: 'numeric' }).toLocaleUpperCase('tr-TR');
+                    const monthName = days[0].toLocaleDateString('tr-TR', { month: 'long', year: 'numeric' }).toLocaleUpperCase('tr-TR');
+                    const headerStyle = 'style="background-color: #c6e0b4; font-weight: bold; text-align: center; border: 1px solid #000;"';
+                    const cellStyle = 'style="border: 1px solid #000; text-align: center;"';
+                    const nameStyle = 'style="border: 1px solid #000; text-align: left;"';
+                    const redBoldStyle = 'style="border: 1px solid #000; text-align: center; color: #ff0000; font-weight: bold;"';
+
+                    let html = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="UTF-8"><meta http-equiv="content-type" content="application/vnd.ms-excel; charset=UTF-8"></head><body>';
+                    html += '<table border="1" style="border-collapse: collapse; font-family: Calibri;">';
                     
                     html += '<tr>';
                     html += `<td colspan="3" ${headerStyle}>${monthName}</td>`; 
@@ -1739,17 +1741,17 @@
                          const dateStr = `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`;
                          html += `<td ${headerStyle}>${dateStr}</td>`;
                     });
-                    cols.forEach(c => html += `<td ${headerStyle}>${c.label}</td>`);
+                    activeCols.forEach(c => html += `<td ${headerStyle}>${c.label}</td>`);
                     html += `<td ${headerStyle}>TOPLAM</td>`;
                     html += '</tr>';
 
                     html += '<tr>';
                     html += `<td ${headerStyle}>SIRA</td>`;
-                    html += `<td colspan="2" ${headerStyle}>AD SOYADI / TARİH</td>`;
+                    html += `<td colspan="2" ${headerStyle}>AD SOYADI</td>`;
                     days.forEach(d => {
                         html += `<td ${headerStyle}>${d.toLocaleDateString('tr-TR', { weekday: 'long' }).toLocaleUpperCase('tr-TR')}</td>`;
                     });
-                    cols.forEach(c => html += `<td ${headerStyle}></td>`);
+                    activeCols.forEach(c => html += `<td ${headerStyle}></td>`);
                     html += `<td ${headerStyle}></td>`;
                     html += '</tr>';
 
@@ -1758,127 +1760,132 @@
                     let gayriMevcut = 0;
 
                     targetP.forEach((p, i) => {
+                        const pData = personStats.find(ps => ps.id === p.id);
+                        const s = pData.stats;
+                        const pUnitRaw = p.unit || (p.title && p.title.split(' ')[0]) || 'TEKNİK EKİP';
+                        const pUnit = pUnitRaw === 'UÇAK' ? 'TEKNİK EKİP' : pUnitRaw;
+
                         html += '<tr>';
                         html += `<td ${cellStyle}>${i + 1}</td>`; 
                         html += `<td colspan="2" ${nameStyle}>${p.fullName}</td>`; 
-                        
-                        let s = { w: 0, gp: 0, gu: 0, ht: 0, yi: 0, r: 0 };
 
                         days.forEach(d => {
                             const dStr = normalizeDate(d);
                             const r = freshRecs.find(x => x.personId === p.id && x.date === dStr);
                             const isWe = d.getDay() === 0 || d.getDay() === 6;
 
-                            let c = isWe ? 'HT' : 'X';
+                            let c = ''; 
+                            if (isWe) c = 'HT'; 
+                            else c = 'X'; 
+
                             let isExcluded = false;
                             if (p.activeUntil && dStr > p.activeUntil) { c = 'İ.K'; isExcluded = true; }
                             else if (p.activeFrom && dStr < p.activeFrom) { c = 'P.YOK'; isExcluded = true; }
 
                             if (!isExcluded) {
                                 if (r) {
-                                    if (r.status === AttendanceStatus.PRESENT) { c = 'X'; hazirMevcut++; }
-                                    else {
+                                    if (r.status === AttendanceStatus.PRESENT) { 
+                                        hazirMevcut++; 
+                                        c = isWe ? 'HT' : 'X';
+                                    } else if (r.status === AttendanceStatus.DUTY || r.status === AttendanceStatus.COURSE) {
+                                        c = r.dutyLocation || (r.status === AttendanceStatus.COURSE ? 'KURS' : 'GÖREV');
+                                        hazirMevcut++;
+                                    } else {
                                         gayriMevcut++;
-                                        if (r.status === AttendanceStatus.DUTY) c = r.dutyType === DutyType.UNPLANNED ? 'G' : 'G';
-                                        else if (r.status === AttendanceStatus.COURSE) c = 'K';
-                                        else if (r.status === AttendanceStatus.SICK) c = 'R';
-                                        else if (r.status === AttendanceStatus.HOSPITAL) c = 'H';
-                                        else if (r.status === AttendanceStatus.LEAVE) c = r.leaveType || 'İZİN';
-                                        else if (r.status === AttendanceStatus.PUBLIC_HOLIDAY) c = 'İ.İ.'; 
-                                        else if (r.status === AttendanceStatus.OTHER) c = r.note || 'DİĞER';
+                                        let displayVal = '';
+                                        if (r.status === AttendanceStatus.LEAVE) displayVal = r.leaveType;
+                                        else if (r.status === AttendanceStatus.SICK) displayVal = 'R';
+                                        else if (r.status === AttendanceStatus.HOSPITAL) displayVal = 'H';
+                                        else if (r.status === AttendanceStatus.PUBLIC_HOLIDAY) displayVal = 'İ.İ.';
+                                        else displayVal = r.status;
                                         
-                                        // Gayrı mevcut beyanları için sürekli periyot bulma
+                                        c = displayVal;
+
                                         const pRecs = freshRecs.filter(x => x.personId === p.id).sort((a,b) => a.date.localeCompare(b.date));
                                         let start = dStr, end = dStr;
                                         const curIdx = pRecs.findIndex(x => x.date === dStr);
                                         if (curIdx !== -1) {
-                                            for(let k = curIdx-1; k >= 0; k--) {
-                                                if (pRecs[k].status === r.status) start = pRecs[k].date;
-                                                else break;
-                                            }
-                                            for(let k = curIdx+1; k < pRecs.length; k++) {
-                                                if (pRecs[k].status === r.status) end = pRecs[k].date;
-                                                else break;
-                                            }
+                                            for(let k = curIdx-1; k >= 0; k--) if (pRecs[k].status === r.status) start = pRecs[k].date; else break;
+                                            for(let k = curIdx+1; k < pRecs.length; k++) if (pRecs[k].status === r.status) end = pRecs[k].date; else break;
                                         }
                                         const gunSayisi = getDaysInRange(start, end).length;
-                                        if (!gayriMevcutBeyanlarList.find(b => b.pId === p.id && b.start === start && b.status === c)) {
-                                            const pUnit = p.unit || aircraft.find(a => aircraftTagsMatch(a, p))?.model || '-';
-                                            gayriMevcutBeyanlarList.push({ pId: p.id, ad: p.fullName, birim: pUnit, tur: c, start, end, gun: gunSayisi });
+                                        const turAbbr = r.status === AttendanceStatus.LEAVE ? r.leaveType : (r.status === AttendanceStatus.SICK ? 'RAPOR' : r.status === AttendanceStatus.HOSPITAL ? 'HASTANE' : r.status === AttendanceStatus.PUBLIC_HOLIDAY ? 'İDARİ İZİN' : 'DİĞER');
+                                        if (!gayriMevcutBeyanlarList.find(b => b.pId === p.id && b.start === start && b.status === turAbbr)) {
+                                            gayriMevcutBeyanlarList.push({ pId: p.id, ad: p.fullName, birim: pUnit, tur: turAbbr, start, end, gun: gunSayisi });
                                         }
                                     }
                                 } else {
-                                    if (!isWe) hazirMevcut++;
+                                    hazirMevcut++;
                                 }
                             }
 
-                            // X ve HT dışındaki her şeyi KIRMIZI ve KALIN yap
-                            const isSpecial = c !== 'X' && c !== 'HT' && c !== 'İ.K' && c !== 'P.YOK';
-                            html += `<td ${isSpecial ? cellStyleRedBold : cellStyle}>${c}</td>`;
-
-                            if (!isExcluded) {
-                                if (r && r.status === AttendanceStatus.PRESENT) s.w++;
-                                if (!r && !isWe) s.w++;
-                                if (c === 'HT') s.ht++;
-                                if (r?.status === AttendanceStatus.LEAVE) s.yi++;
-                                if (r?.status === AttendanceStatus.SICK || r?.status === AttendanceStatus.HOSPITAL) s.r++;
-                                if (r?.status === AttendanceStatus.DUTY) {
-                                    if (r.dutyType === DutyType.UNPLANNED) s.gu++;
-                                    else s.gp++;
-                                }
-                            }
+                            const isAbsence = r && ![AttendanceStatus.PRESENT, AttendanceStatus.DUTY, AttendanceStatus.COURSE].includes(r.status);
+                            html += `<td ${isAbsence ? redBoldStyle : cellStyle}>${(c === 'MEVCUT' || c === 'Mevcut') ? '' : c}</td>`;
                         });
                         
-                        cols.forEach(col => {
-                            const val = s[col.key] || 0;
-                            html += `<td ${cellStyle}>${val || 0}</td>`;
+                        activeCols.forEach(col => {
+                            const val = s[col.key];
+                            html += `<td ${cellStyle}>${val === 0 ? '' : val}</td>`;
                         });
-                        let totalActiveDaysInRange = 0;
+
+                        let totalActive = 0;
                         days.forEach(d => {
                            const dStr = normalizeDate(d);
-                           if (!(p.activeUntil && dStr > p.activeUntil) && !(p.activeFrom && dStr < p.activeFrom)) totalActiveDaysInRange++;
+                           if (!(p.activeUntil && dStr > p.activeUntil) && !(p.activeFrom && dStr < p.activeFrom)) totalActive++;
                         });
-                        html += `<td ${cellStyle}>${totalActiveDaysInRange}</td>`; 
+                        html += `<td ${cellStyle}>${totalActive === 0 ? '' : totalActive}</td>`; 
                         html += '</tr>';
                     });
                     html += '</table>';
 
-                    // GENEL MEVCUT ÖZETİ
                     html += '<br/><table border="1" style="border-collapse: collapse; width: 300px;">';
-                    const rangeTitle = days.length === 1 ? `${String(days[0].getDate()).padStart(2, '0')}-${String(days[0].getMonth()+1).padStart(2, '0')}-${days[0].getFullYear()}` : "";
-                    html += `<tr><td colspan="2" ${headerStyle}>GENEL MEVCUT ÖZETİ (${rangeTitle})</td></tr>`;
-                    html += `<tr><td ${cellStyle}>BİRİM MEVCUDU</td><td ${cellStyle}>${targetP.length}</td></tr>`;
-                    html += `<tr><td ${cellStyle}>HAZIR MEVCUT</td><td ${cellStyle} style="color: green; font-weight: bold;">${hazirMevcut}</td></tr>`;
-                    html += `<tr><td ${cellStyle}>GAYRI MEVCUT</td><td ${cellStyle} style="color: red; font-weight: bold;">${gayriMevcut}</td></tr>`;
+                    html += `<tr><td colspan="2" ${headerStyle}>GENEL ÖZET</td></tr>`;
+                    html += `<tr><td ${cellStyle}>TOPLAM</td><td ${cellStyle}>${targetP.length || ''}</td></tr>`;
+                    html += `<tr><td ${cellStyle}>HAZIR</td><td ${cellStyle} style="color: green; font-weight: bold;">${hazirMevcut || ''}</td></tr>`;
+                    html += `<tr><td ${cellStyle}>GAYRI MEVCUT</td><td ${cellStyle} style="color: red; font-weight: bold;">${gayriMevcut || ''}</td></tr>`;
                     html += '</table>';
 
-                    // GAYRI MEVCUT BEYANLARI
                     html += '<br/><table border="1" style="border-collapse: collapse;">';
                     html += `<tr><td colspan="6" ${headerStyle}>GAYRI MEVCUT BEYANLARI</td></tr>`;
                     html += `<tr><td ${headerStyle}>SIRA NO</td><td ${headerStyle}>AD SOYAD</td><td ${headerStyle}>BİRİM</td><td ${headerStyle}>TÜR</td><td ${headerStyle}>TARİHLER</td><td ${headerStyle}>GÜN SAYISI</td></tr>`;
                     gayriMevcutBeyanlarList.forEach((b, idx) => {
-                        const fmtD = (s) => { const [y,m,d] = s.split('-'); return `${d}-${m}-${y}`; };
+                        const fmtD = (s) => { const parts = s.split('-'); return `${parts[2]}-${parts[1]}-${parts[0]}`; };
+                        const displayUnit = b.birim === 'UÇAK' ? 'TEKNİK EKİP' : b.birim;
                         html += '<tr>';
                         html += `<td ${cellStyle}>${idx + 1}</td>`;
                         html += `<td ${nameStyle}>${b.ad}</td>`;
-                        html += `<td ${cellStyle}>${b.birim}</td>`;
-                        html += `<td ${cellStyleRedBold}>${b.tur}</td>`;
+                        html += `<td ${cellStyle}>${displayUnit}</td>`;
+                        html += `<td ${redBoldStyle}>${b.tur}</td>`;
                         html += `<td ${cellStyle}>${fmtD(b.start)} / ${fmtD(b.end)}</td>`;
-                        html += `<td ${cellStyle}>${b.gun}</td>`;
+                        html += `<td ${cellStyle}>${b.gun || ''}</td>`;
                         html += '</tr>';
                     });
                     html += '</table>';
 
+                    html += '<br/><table border="1" style="border-collapse: collapse; width: 400px;">';
+                    html += `<tr><td colspan="2" ${headerStyle}>KISALTMALAR VE AÇIKLAMALARI</td></tr>`;
+                    html += `<tr><td ${cellStyle}>X</td><td ${nameStyle}>MESAİ / HAZIR</td></tr>`;
+                    html += `<tr><td ${cellStyle}>HT</td><td ${nameStyle}>HAFTA TATİLİ</td></tr>`;
+                    html += `<tr><td ${cellStyle}>G.İ</td><td ${nameStyle}>GÜNLÜK İZİN</td></tr>`;
+                    html += `<tr><td ${cellStyle}>F.M.İ</td><td ${nameStyle}>FAZLA MESAİ İZNİ</td></tr>`;
+                    html += `<tr><td ${cellStyle}>Y.F.M.İ</td><td ${nameStyle}>YARIM GÜN FAZLA MESAİ İZNİ</td></tr>`;
+                    html += `<tr><td ${cellStyle}>Yİ</td><td ${nameStyle}>YILLIK İZİN</td></tr>`;
+                    html += `<tr><td ${cellStyle}>M.İ</td><td ${nameStyle}>MAZERET İZNİ</td></tr>`;
+                    html += `<tr><td ${cellStyle}>Y.G.İ</td><td ${nameStyle}>YARIM GÜN İZİN</td></tr>`;
+                    html += `<tr><td ${cellStyle}>RAPOR</td><td ${nameStyle}>RAPOR</td></tr>`;
+                    html += `<tr><td ${cellStyle}>HASTANE</td><td ${nameStyle}>HASTANE</td></tr>`;
+                    html += `<tr><td ${cellStyle}>KURS</td><td ${nameStyle}>KURS</td></tr>`;
+                    html += `<tr><td ${cellStyle}>İDARİ İZİN</td><td ${nameStyle}>İDARİ İZİN</td></tr>`;
+                    html += '</table>';
+
                     html += '</body></html>';
-                    const blob = new Blob(['\uFEFF', html], { type: 'application/vnd.ms-excel;charset=utf-8' });
                     const link = document.createElement('a');
-                    link.href = URL.createObjectURL(blob);
-                    link.download = `Rapor_${isDaily ? getTodayString() : (dates.start + '_' + dates.end)}.xls`;
+                    link.href = URL.createObjectURL(new Blob(['\uFEFF', html], { type: 'application/vnd.ms-excel;charset=utf-8' }));
+                    link.download = `Yoklama_Raporu_${isDaily ? getTodayString() : (dates.start + '_' + dates.end)}.xls`;
                     link.click();
 
                 } catch(e) { 
-                    console.error(e);
-                    alert("Rapor oluşturma hatası: " + e);
+                    alert("Rapor hatası: " + e);
                 } finally {
                     setLoading(false);
                 }
@@ -2022,9 +2029,6 @@
 
             const pilots = people.filter(p => p.role === Role.PILOT || (p.title && p.title.toLocaleUpperCase('tr-TR').includes('PİLOT')));
             const others = people.filter(p => !pilots.includes(p));
-            const hasPilots = pilots.length > 0;
-            const isGroundUnit = selModel === AircraftModel.YER_DESTEK;
-            const isMixedUnit = !isGroundUnit && hasPilots && others.length > 0;
 
             return (
                 <div className="container mx-auto p-4 max-w-6xl animate-fade-in relative">
@@ -2043,14 +2047,10 @@
                     {rangeStartDate !== rangeEndDate && (<div className="bg-blue-900/40 border border-blue-700 p-3 rounded-lg flex items-center text-blue-200 text-sm mb-4 animate-fade-in"><strong>DİKKAT:</strong> Seçtiğiniz durumlar {rangeStartDate} ile {rangeEndDate} arasındaki TÜM GÜNLERE uygulanacaktır.</div>)}
                     <Card title="Personel Listesi">
                          <div className="grid gap-4">
-    
-
-    {/* Tüm personeli (hem pilotlar hem diğerleri) tek bir listede birleştirip basıyoruz */}
-    {[...pilots, ...others].map((p, i) => renderPersonRow(p, i))}
-  </div>
-</Card>
+                            {[...pilots, ...others].map((p, i) => renderPersonRow(p, i))}
+                        </div>
+                    </Card>
                   
-    
                     <div className="sticky bottom-0 bg-forest-950 p-4 border-t border-forest-700 flex justify-center mt-4"><Button size="lg" onClick={save} className="w-full max-w-md">KAYDET</Button></div>
                     <div className="h-20" />
                     {detailModalOpen && detailPerson && (
@@ -2058,8 +2058,8 @@
                             <div className="bg-forest-900 border border-forest-600 w-full max-w-4xl rounded-lg shadow-2xl flex flex-col max-h-[90vh]">
                                 <div className="p-4 border-b border-forest-700 flex justify-between items-center bg-forest-950"><div><h3 className="text-xl font-bold text-white">{detailPerson.fullName}</h3><p className="text-sm text-forest-400">Detaylı Günlük Giriş</p></div><button onClick={() => { setDetailModalOpen(false); setDetailPerson(null) }}><X size={24} className="text-forest-400 hover:text-white" /></button></div>
                                 <div className="p-4 overflow-y-auto flex-1 space-y-3">{Object.keys(detailDays).sort().map(dStr => {
-                                    const dateObj = dStr.split('-').map(Number);
-                                    const noonDate = new Date(dateObj[0], dateObj[1]-1, dateObj[2], 12,0,0);
+                                    const dateObjArr = dStr.split('-').map(Number);
+                                    const noonDate = new Date(dateObjArr[0], dateObjArr[1]-1, dateObjArr[2], 12,0,0);
                                     return (<div key={dStr} className={`p-3 rounded border ${noonDate.getDay() === 0 || noonDate.getDay() === 6 ? 'bg-forest-800/30 border-forest-700' : 'bg-forest-950/30 border-forest-800'} flex flex-col lg:flex-row items-center gap-4`}><div className="w-full lg:w-32 flex-shrink-0 text-center lg:text-left"><div className="font-bold text-white">{noonDate.toLocaleDateString('tr-TR')}</div><div className="text-xs text-forest-400 uppercase">{noonDate.toLocaleDateString('tr-TR', { weekday: 'long' })}</div></div><div className="flex-1 w-full"><AttendanceControl personId={dStr} state={detailDays[dStr]} onChangeStatus={(id, s) => handleModalStatusChange(id, s)} onChangeDetail={(id, f, v) => handleModalDayChange(id, f, v)} /></div></div>)
                                 })}</div>
                                 <div className="p-4 border-t border-forest-700 bg-forest-950 flex justify-end gap-2"><Button variant="secondary" onClick={() => { setDetailModalOpen(false); setDetailPerson(null) }}>İptal</Button><Button onClick={saveModal}>Kaydet</Button></div>
@@ -2068,6 +2068,14 @@
                     )}
                 </div>
             );
+        };
+
+        const handleStatusChangeWithAuth = (pid, status) => {
+            // Placeholder: Needs to be implemented in AttendanceView or passed down
+        };
+
+        const handleDetailChangeWithAuth = (pid, field, value) => {
+             // Placeholder: Needs to be implemented in AttendanceView or passed down
         };
 
         const Login = ({ onLogin }) => {
@@ -2087,7 +2095,7 @@
             return (
                 <div className="min-h-screen pb-10">
                     <div id="curtain" className={`fixed top-0 left-0 w-full h-full bg-forest-800 z-[9999] flex flex-col items-center justify-center transition-transform duration-1000 ease-in-out ${curtainOpen ? '-translate-y-full' : 'translate-y-0'} ${curtainHidden ? 'hidden' : ''}`}>
-                        <div className="w-96 h-96 rounded-full overflow-hidden border-8 border-forest-400 shadow-[0_0_40px_rgba(0,0,0,0.6)] mb-8"><img src="https://media4.giphy.com/media/v1.Y2lkPTc5MGI3NjExNW9uenhqZXdxbGd6YWNxc2UwempmOXNyaG15NGtuZTJmb3EyaTNqZCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9cw/1rrxPs1nb3IjwmbiXw/giphy.gif" className="w-full h-full object-cover" /></div>
+                        <div className="w-96 h-96 rounded-full overflow-hidden border-8 border-forest-400 shadow-[0_0_40px_rgba(0,0,0,0.6)] mb-8"><img src="https://media4.giphy.com/media/v1.Y2lkPTc5MGI3NjExNW9uenhqZXdxbGd6YWNxc2UwempmOXNyaG15NGtuZTJmb3EyaTNqZCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9cw/1rrxPs1nb3IjwmbiXw/giphy.gif" className="w-full h-full object-cover" alt="Loading" /></div>
                         <h1 className="text-5xl md:text-6xl font-bold text-white tracking-wider text-center px-4">BAKIM ŞUBE YOKLAMA</h1>
                     </div>
                     {view === 'attendance' && (<div className="relative"><AttendanceView /><div className="fixed top-4 right-4 z-50"><button onClick={() => setView('login')} className="bg-forest-600 hover:bg-forest-500 text-white px-3 py-1.5 text-xs rounded-full border border-forest-500 shadow-md flex items-center gap-1.5 transition-all font-bold tracking-wide"><Settings size={14} /><span>Yönetici Paneli</span></button></div></div>)}
