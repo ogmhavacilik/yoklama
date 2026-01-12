@@ -1604,100 +1604,67 @@
                 try {
                     const freshRecs = storageService.getAttendanceSync();
                     const finalPersonnel = await storageService.getPersonnelSync();
-                    const aircraft = await storageService.getAircraft();
-                    const uniqueModels = [...new Set(aircraft.map(a => a.model))].filter(m => m && m.length > 1 && m !== 'e').sort();
-
-                    const specificAircraftTags = uniqueModels
-                        .filter(m => m !== AircraftModel.YER_DESTEK && m !== AircraftModel.TEKNIK_EKIP && m !== AircraftModel.IDARI_BIRIM)
-                        .map(m => m.replace(/[^a-zA-Z0-9ğüşıöçĞÜŞİÖÇ]/g, '').toLocaleUpperCase('tr-TR'));
+                    const aircraftList = await storageService.getAircraft();
+                    const models = [...new Set(aircraftList.map(a => a.model))].filter(m => m && m.length > 1).sort();
+                    const specificAircraftTags = models.filter(m => ![AircraftModel.YER_DESTEK, AircraftModel.TEKNIK_EKIP, AircraftModel.IDARI_BIRIM].includes(m)).map(m => m.replace(/[^a-zA-Z0-9ğüşıöçĞÜŞİÖÇ]/g, '').toLocaleUpperCase('tr-TR'));
 
                     let targetP = finalPersonnel.filter(p => p.role !== Role.PILOT).sort((a, b) => (a.rank || 999) - (b.rank || 999));
+                    const startDateForFilter = isDaily ? getTodayString() : dates.start, endDateForFilter = isDaily ? getTodayString() : dates.end;
+                    targetP = targetP.filter(p => !(p.activeUntil && p.activeUntil < startDateForFilter) && !(p.activeFrom && p.activeFrom > endDateForFilter));
 
-                    const startDateForFilter = isDaily ? getTodayString() : dates.start;
-                    const endDateForFilter = isDaily ? getTodayString() : dates.end;
+                    const unitOrder = ["YÖNETİM", "BELL-429", "C-650", "B-360", "T-70", "AT-802", "TEKNİK EKİP", "YER DESTEK", "İDARİ"];
+                    const fUK = (p) => {
+                        if (YONETIM_NAMES.includes(p.fullName)) return "YÖNETİM";
+                        if (p.unit && unitOrder.includes(p.unit)) return p.unit;
+                        const titleUpper = (p.title || '').toLocaleUpperCase('tr-TR');
+                        if (titleUpper.includes('BELL')) return "BELL-429";
+                        if (titleUpper.includes('C-650')) return "C-650";
+                        if (titleUpper.includes('B-360')) return "B-360";
+                        if (titleUpper.includes('T-70')) return "T-70";
+                        if (titleUpper.includes('AT-802')) return "AT-802";
+                        if (titleUpper.includes('TEKNİ') || titleUpper.includes('MÜHENDİS')) return "TEKNİK EKİP";
+                        if (titleUpper.includes('MEMUR') || titleUpper.includes('İŞÇİ') || titleUpper.includes('ŞÖFÖR') || [Role.DRIVER, Role.CLEANING, Role.KITCHEN, Role.TEA_SERVICE, Role.OTHER].includes(p.role)) return "YER DESTEK";
+                        return "İDARİ";
+                    };
                     
-                    targetP = targetP.filter(p => {
-                        if (p.activeUntil && p.activeUntil < startDateForFilter) return false;
-                        if (p.activeFrom && p.activeFrom > endDateForFilter) return false;
-                        return true;
-                    });
-
-                    if (reportUnit === 'YÖNETİM') {
-                         targetP = targetP.filter(p => YONETIM_NAMES.includes(p.fullName));
-                    } else if (reportUnit !== 'TÜM BİRİMLER') {
-                        targetP = targetP.filter(p => {
-                             if (YONETIM_NAMES.includes(p.fullName)) return false;
-                             const titleUpper = (p.title || '').toLocaleUpperCase('tr-TR');
-                             const tClean = titleUpper.replace(/[^a-zA-Z0-9ğüşıöçĞÜŞİÖÇ]/g, '');
-                             const belongsToSpecificAircraft = specificAircraftTags.some(tag => tClean.includes(tag));
-                             if (reportUnit === AircraftModel.YER_DESTEK) {
-                                 if (p.fullName.includes('SERKAN KOTAN')) return true; 
-                                 if (belongsToSpecificAircraft) return false;
-                                 const isTechnicalRole = titleUpper.includes('UÇAK TEKNİ') || titleUpper.includes('MÜHENDİS');
-                                 if (isTechnicalRole) return false;
-                                 const role = p.role;
-                                 const isGroundRole = [Role.DRIVER, Role.CLEANING, Role.KITCHEN, Role.TEA_SERVICE, Role.OTHER].includes(role);
-                                 const isGroundTitle = titleUpper.includes('MEMUR') || titleUpper.includes('İŞÇİ') || titleUpper.includes('ŞÖFÖR');
-                                 return isGroundRole || isGroundTitle;
-                             } else if (reportUnit === AircraftModel.TEKNIK_EKIP) {
-                                 if (p.fullName.includes('SERKAN KOTAN')) return false; 
-                                 if (belongsToSpecificAircraft) return false;
-                                 return titleUpper.includes('UÇAK TEKNİ') || titleUpper.includes('MÜHENDİS');
-                             } else if (reportUnit === AircraftModel.IDARI_BIRIM) {
-                                 return (titleUpper === 'MEMUR' || titleUpper.includes('İDARİ')) && !belongsToSpecificAircraft;
-                             } else {
-                                 const mNameNormalized = reportUnit.replace(/[^a-zA-Z0-9ğüşıöçĞÜŞİÖÇ]/g, '').toLocaleUpperCase('tr-TR');
-                                 return tClean.includes(mNameNormalized);
-                             }
-                        });
-                    }
-
-                    if (reportSearch) {
-                        const search = reportSearch.toLocaleUpperCase('tr-TR');
-                        targetP = targetP.filter(p => p.fullName.toLocaleUpperCase('tr-TR').includes(search));
-                    }
+                    targetP.sort((a, b) => { const uA = fUK(a); const uB = fUK(b); let idxA = unitOrder.indexOf(uA); let idxB = unitOrder.indexOf(uB); if (idxA === -1) idxA = unitOrder.length; if (idxB === -1) idxB = unitOrder.length; return idxA !== idxB ? idxA - idxB : (a.rank || 999) - (b.rank || 999); });
 
                     let days = [];
-                    if (isDaily) {
-                        const [y,m,d] = getTodayString().split('-').map(Number);
-                        days.push(new Date(y, m-1, d, 12,0,0));
-                    } else {
-                        const [sY, sM, sD] = dates.start.split('-').map(Number);
-                        const [eY, eM, eD] = dates.end.split('-').map(Number);
-                        let current = new Date(sY, sM - 1, sD, 12, 0, 0);
-                        const end = new Date(eY, eM - 1, eD, 12, 0, 0);
-                        while(current <= end) {
-                            days.push(new Date(current));
-                            current.setDate(current.getDate() + 1);
-                        }
+                    if (isDaily) days.push(new Date(getTodayString().split('-')[0], getTodayString().split('-')[1]-1, getTodayString().split('-')[2], 12,0,0));
+                    else {
+                        let current = new Date(dates.start.split('-')[0], dates.start.split('-')[1]-1, dates.start.split('-')[2], 12,0,0), end = new Date(dates.end.split('-')[0], dates.end.split('-')[1]-1, dates.end.split('-')[2], 12,0,0);
+                        while(current <= end) { days.push(new Date(current)); current.setDate(current.getDate() + 1); }
                     }
 
-                    const allPossibleCols = [
-                        { key: 'w', label: 'X' },
-                        { key: 'gp', label: 'PLANLI' },
-                        { key: 'gu', label: 'PLANSIZ' },
-                        { key: 'ht', label: 'HT' },
-                        { key: 'yi', label: 'Yİ' },
-                        { key: 'mi', label: 'Mİ' },
-                        { key: 'gi', label: 'Gİ' },
-                        { key: 'ygi', label: 'YGİ' },
-                        { key: 'fmi', label: 'FMİ' },
-                        { key: 'yfmi', label: 'YFMİ' },
-                        { key: 'rt', label: 'İİ' },
-                        { key: 'r', label: 'R' },
-                        { key: 'h', label: 'H' },
-                        { key: 'k', label: 'K' },
-                        { key: 'ot', label: 'D' }
-                    ];
+                    const uniqueAbsentIds = new Set();
+                    const beyanMap = {};
+                    targetP.forEach(p => {
+                        let pAbsences = [];
+                        days.forEach(d => {
+                            const dStr = normalizeDate(d), r = freshRecs.find(x => x.personId === p.id && x.date === dStr);
+                            const absenceStates = [AttendanceStatus.LEAVE, AttendanceStatus.SICK, AttendanceStatus.HOSPITAL, AttendanceStatus.PUBLIC_HOLIDAY, AttendanceStatus.OTHER, AttendanceStatus.ABSENT];
+                            if (r && absenceStates.includes(r.status)) pAbsences.push(r);
+                        });
+                        if (pAbsences.length > 0) {
+                            uniqueAbsentIds.add(p.id);
+                            const tCounts = {};
+                            pAbsences.forEach(ra => {
+                                const lbl = ra.status === AttendanceStatus.LEAVE ? ra.leaveType : (ra.status === AttendanceStatus.SICK ? 'RAPOR' : (ra.status === AttendanceStatus.HOSPITAL ? 'HASTANE' : (ra.status === AttendanceStatus.PUBLIC_HOLIDAY ? 'İDARİ İZİN' : 'DİĞER')));
+                                tCounts[lbl] = (tCounts[lbl] || 0) + (ra.leaveType === LeaveType.HALF_DAY ? 0.5 : 1);
+                            });
+                            const domType = Object.keys(tCounts).reduce((a, b) => tCounts[a] > tCounts[b] ? a : b);
+                            const sumG = Object.values(tCounts).reduce((a, b) => a + b, 0);
+                            beyanMap[p.id] = { ad: p.fullName, birim: fUK(p), tur: domType, start: pAbsences[0].date, end: pAbsences[pAbsences.length-1].date, gun: sumG };
+                        }
+                    });
 
-                    const personStats = targetP.map(p => {
+                    const totalFixed = 69, gayriMevcutCount = uniqueAbsentIds.size, hazirCount = totalFixed - gayriMevcutCount;
+                    const allCols = [{ key: 'w', label: 'X' }, { key: 'ht', label: 'HT' }, { key: 'yi', label: 'Yİ' }, { key: 'mi', label: 'Mİ' }, { key: 'gi', label: 'Gİ' }, { key: 'ygi', label: 'YGİ' }, { key: 'fmi', label: 'FMİ' }, { key: 'yfmi', label: 'YFMİ' }, { key: 'rt', label: 'İİ' }, { key: 'r', label: 'R' }, { key: 'h', label: 'H' }, { key: 'k', label: 'K' }, { key: 'ot', label: 'D' }];
+                    const stats = targetP.map(p => {
                         let s = { w: 0, gp: 0, gu: 0, ht: 0, yi: 0, mi: 0, gi: 0, ygi: 0, fmi: 0, yfmi: 0, rt: 0, r: 0, h: 0, k: 0, ot: 0 };
                         days.forEach(d => {
-                            const dStr = normalizeDate(d);
-                            const r = freshRecs.find(x => x.personId === p.id && x.date === dStr);
-                            const isWe = d.getDay() === 0 || d.getDay() === 6;
-                            let isExcluded = (p.activeUntil && dStr > p.activeUntil) || (p.activeFrom && dStr < p.activeFrom);
-                            if (!isExcluded) {
+                            const dStr = normalizeDate(d), r = freshRecs.find(x => x.personId === p.id && x.date === dStr), isWe = d.getDay() === 0 || d.getDay() === 6;
+                            if (!((p.activeUntil && dStr > p.activeUntil) || (p.activeFrom && dStr < p.activeFrom))) {
                                 if (r) {
                                     if (r.status === AttendanceStatus.PRESENT) { if (isWe) s.ht++; else s.w++; }
                                     else if (r.status === AttendanceStatus.DUTY) { if (r.dutyType === DutyType.UNPLANNED) s.gu++; else s.gp++; }
@@ -1705,190 +1672,64 @@
                                     else if (r.status === AttendanceStatus.SICK) s.r++;
                                     else if (r.status === AttendanceStatus.HOSPITAL) s.h++;
                                     else if (r.status === AttendanceStatus.LEAVE) {
-                                        if (r.leaveType === LeaveType.ANNUAL) s.yi++;
-                                        else if (r.leaveType === LeaveType.EXCUSE) s.mi++;
-                                        else if (r.leaveType === LeaveType.DAILY) s.gi++;
-                                        else if (r.leaveType === LeaveType.HALF_DAY) s.ygi += 0.5;
-                                        else if (r.leaveType === LeaveType.HALF_OVERTIME) s.yfmi += 0.5;
+                                        if (r.leaveType === LeaveType.ANNUAL) s.yi++; else if (r.leaveType === LeaveType.EXCUSE) s.mi++; else if (r.leaveType === LeaveType.DAILY) s.gi++;
+                                        else if (r.leaveType === LeaveType.HALF_DAY) { s.ygi += 0.5; s.w += 0.5; }
+                                        else if (r.leaveType === LeaveType.HALF_OVERTIME) { s.yfmi += 0.5; s.w += 0.5; }
                                         else if (r.leaveType === LeaveType.OVERTIME) s.fmi++;
-                                    }
-                                    else if (r.status === AttendanceStatus.PUBLIC_HOLIDAY) s.rt++;
+                                    } else if (r.status === AttendanceStatus.PUBLIC_HOLIDAY) s.rt++;
                                     else if (r.status === AttendanceStatus.OTHER) s.ot++;
-                                } else {
-                                    if (isWe) s.ht++; else s.w++;
-                                }
+                                } else { if (isWe) s.ht++; else s.w++; }
                             }
                         });
-                        return { id: p.id, stats: s };
+                        return { id: p.id, s };
                     });
-
-                    const activeCols = allPossibleCols.filter(col => {
-                        return personStats.some(ps => ps.stats[col.key] > 0);
-                    });
-
-                    const monthName = days[0].toLocaleDateString('tr-TR', { month: 'long', year: 'numeric' }).toLocaleUpperCase('tr-TR');
-                    const headerStyle = 'style="background-color: #c6e0b4; font-weight: bold; text-align: center; border: 1px solid #000;"';
-                    const cellStyle = 'style="border: 1px solid #000; text-align: center;"';
-                    const nameStyle = 'style="border: 1px solid #000; text-align: left;"';
-                    const redBoldStyle = 'style="border: 1px solid #000; text-align: center; color: #ff0000; font-weight: bold;"';
-
+                    const activeCols = allCols.filter(c => stats.some(st => st.s[c.key] > 0));
+                    const fmt = (n) => n === 0 ? '' : String(n).replace('.', ',');
+                    const hStyle = 'style="background-color: #c6e0b4; font-weight: bold; text-align: center; border: 1px solid #000;"', cStyle = 'style="border: 1px solid #000; text-align: center; mso-number-format:\'\@\';"', nStyle = 'style="border: 1px solid #000; text-align: left;"', rbStyle = 'style="border: 1px solid #000; text-align: center; color: #ff0000; font-weight: bold; mso-number-format:\'\@\';"';
                     let html = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="UTF-8"><meta http-equiv="content-type" content="application/vnd.ms-excel; charset=UTF-8"></head><body>';
                     html += '<table border="1" style="border-collapse: collapse; font-family: Calibri;">';
-                    
-                    html += '<tr>';
-                    html += `<td colspan="3" ${headerStyle}>${monthName}</td>`; 
-                    days.forEach(d => {
-                         const dateStr = `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`;
-                         html += `<td ${headerStyle}>${dateStr}</td>`;
-                    });
-                    activeCols.forEach(c => html += `<td ${headerStyle}>${c.label}</td>`);
-                    html += `<td ${headerStyle}>TOPLAM</td>`;
-                    html += '</tr>';
-
-                    html += '<tr>';
-                    html += `<td ${headerStyle}>SIRA</td>`;
-                    html += `<td colspan="2" ${headerStyle}>AD SOYADI</td>`;
-                    days.forEach(d => {
-                        html += `<td ${headerStyle}>${d.toLocaleDateString('tr-TR', { weekday: 'long' }).toLocaleUpperCase('tr-TR')}</td>`;
-                    });
-                    activeCols.forEach(c => html += `<td ${headerStyle}></td>`);
-                    html += `<td ${headerStyle}></td>`;
-                    html += '</tr>';
-
-                    const gayriMevcutBeyanlarList = [];
-                    let hazirMevcut = 0;
-                    let gayriMevcut = 0;
-
+                    html += `<tr><td colspan="3" ${hStyle}>${days[0].toLocaleDateString('tr-TR', { month: 'long', year: 'numeric' }).toLocaleUpperCase('tr-TR')}</td>`;
+                    days.forEach(d => html += `<td ${hStyle}>${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}</td>`);
+                    activeCols.forEach(c => html += `<td ${hStyle}>${c.label}</td>`); html += `<td ${hStyle}>TOPLAM</td></tr>`;
+                    html += `<tr><td ${hStyle}>SIRA</td><td colspan="2" ${hStyle}>AD SOYADI</td>`;
+                    days.forEach(d => html += `<td ${hStyle}>${d.toLocaleDateString('tr-TR', { weekday: 'long' }).toLocaleUpperCase('tr-TR')}</td>`);
+                    activeCols.forEach(() => html += `<td ${hStyle}></td>`); html += `<td ${hStyle}></td></tr>`;
+                    let lastUnit = null;
                     targetP.forEach((p, i) => {
-                        const pData = personStats.find(ps => ps.id === p.id);
-                        const s = pData.stats;
-                        const pUnitRaw = p.unit || (p.title && p.title.split(' ')[0]) || 'TEKNİK EKİP';
-                        const pUnit = pUnitRaw === 'UÇAK' ? 'TEKNİK EKİP' : pUnitRaw;
-
-                        html += '<tr>';
-                        html += `<td ${cellStyle}>${i + 1}</td>`; 
-                        html += `<td colspan="2" ${nameStyle}>${p.fullName}</td>`; 
-
+                        const pUnit = fUK(p);
+                        if (pUnit !== lastUnit) {
+                            html += `<tr><td colspan="${3 + days.length + activeCols.length + 1}" style="background-color: #228b22; color: white; font-weight: bold; text-align: left; border: 1px solid #000; padding: 5px;">${pUnit}</td></tr>`;
+                            lastUnit = pUnit;
+                        }
+                        const s = stats.find(st => st.id === p.id).s;
+                        html += `<tr><td ${cStyle}>${i + 1}</td><td colspan="2" ${nStyle}>${p.fullName}</td>`;
                         days.forEach(d => {
-                            const dStr = normalizeDate(d);
-                            const r = freshRecs.find(x => x.personId === p.id && x.date === dStr);
-                            const isWe = d.getDay() === 0 || d.getDay() === 6;
-
-                            let c = ''; 
-                            if (isWe) c = 'HT'; 
-                            else c = 'X'; 
-
-                            let isExcluded = false;
-                            if (p.activeUntil && dStr > p.activeUntil) { c = 'İ.K'; isExcluded = true; }
-                            else if (p.activeFrom && dStr < p.activeFrom) { c = 'P.YOK'; isExcluded = true; }
-
-                            if (!isExcluded) {
-                                if (r) {
-                                    if (r.status === AttendanceStatus.PRESENT) { 
-                                        hazirMevcut++; 
-                                        c = isWe ? 'HT' : 'X';
-                                    } else if (r.status === AttendanceStatus.DUTY || r.status === AttendanceStatus.COURSE) {
-                                        c = r.dutyLocation || (r.status === AttendanceStatus.COURSE ? 'KURS' : 'GÖREV');
-                                        hazirMevcut++;
-                                    } else {
-                                        gayriMevcut++;
-                                        let displayVal = '';
-                                        if (r.status === AttendanceStatus.LEAVE) displayVal = r.leaveType;
-                                        else if (r.status === AttendanceStatus.SICK) displayVal = 'R';
-                                        else if (r.status === AttendanceStatus.HOSPITAL) displayVal = 'H';
-                                        else if (r.status === AttendanceStatus.PUBLIC_HOLIDAY) displayVal = 'İ.İ.';
-                                        else displayVal = r.status;
-                                        
-                                        c = displayVal;
-
-                                        const pRecs = freshRecs.filter(x => x.personId === p.id).sort((a,b) => a.date.localeCompare(b.date));
-                                        let start = dStr, end = dStr;
-                                        const curIdx = pRecs.findIndex(x => x.date === dStr);
-                                        if (curIdx !== -1) {
-                                            for(let k = curIdx-1; k >= 0; k--) if (pRecs[k].status === r.status) start = pRecs[k].date; else break;
-                                            for(let k = curIdx+1; k < pRecs.length; k++) if (pRecs[k].status === r.status) end = pRecs[k].date; else break;
-                                        }
-                                        const gunSayisi = getDaysInRange(start, end).length;
-                                        const turAbbr = r.status === AttendanceStatus.LEAVE ? r.leaveType : (r.status === AttendanceStatus.SICK ? 'RAPOR' : r.status === AttendanceStatus.HOSPITAL ? 'HASTANE' : r.status === AttendanceStatus.PUBLIC_HOLIDAY ? 'İDARİ İZİN' : 'DİĞER');
-                                        if (!gayriMevcutBeyanlarList.find(b => b.pId === p.id && b.start === start && b.status === turAbbr)) {
-                                            gayriMevcutBeyanlarList.push({ pId: p.id, ad: p.fullName, birim: pUnit, tur: turAbbr, start, end, gun: gunSayisi });
-                                        }
-                                    }
-                                } else {
-                                    hazirMevcut++;
-                                }
+                            const dStr = normalizeDate(d), r = freshRecs.find(x => x.personId === p.id && x.date === dStr), isWe = d.getDay() === 0 || d.getDay() === 6;
+                            let ct = isWe ? 'HT' : 'X';
+                            if (p.activeUntil && dStr > p.activeUntil) ct = 'İ.K'; else if (p.activeFrom && dStr < p.activeFrom) ct = 'P.YOK';
+                            else if (r && r.status !== AttendanceStatus.PRESENT) {
+                                if (r.status === AttendanceStatus.DUTY || r.status === AttendanceStatus.COURSE) ct = (r.dutyLocation || (r.status === AttendanceStatus.COURSE ? 'KURS' : 'GÖREV')).toLocaleUpperCase('tr-TR');
+                                else ct = r.status === AttendanceStatus.LEAVE ? r.leaveType : (r.status === AttendanceStatus.SICK ? 'R' : (r.status === AttendanceStatus.HOSPITAL ? 'H' : (r.status === AttendanceStatus.PUBLIC_HOLIDAY ? 'İ.İ.' : r.status)));
                             }
-
-                            const isAbsence = r && ![AttendanceStatus.PRESENT, AttendanceStatus.DUTY, AttendanceStatus.COURSE].includes(r.status);
-                            html += `<td ${isAbsence ? redBoldStyle : cellStyle}>${(c === 'MEVCUT' || c === 'Mevcut') ? '' : c}</td>`;
+                            html += `<td ${r && ![AttendanceStatus.PRESENT, AttendanceStatus.DUTY].includes(r.status) ? rbStyle : cStyle}>${ct}</td>`;
                         });
-                        
-                        activeCols.forEach(col => {
-                            const val = s[col.key];
-                            html += `<td ${cellStyle}>${val === 0 ? '' : val}</td>`;
-                        });
-
-                        let totalActive = 0;
-                        days.forEach(d => {
-                           const dStr = normalizeDate(d);
-                           if (!(p.activeUntil && dStr > p.activeUntil) && !(p.activeFrom && dStr < p.activeFrom)) totalActive++;
-                        });
-                        html += `<td ${cellStyle}>${totalActive === 0 ? '' : totalActive}</td>`; 
-                        html += '</tr>';
+                        activeCols.forEach(col => html += `<td ${cStyle}>${fmt(s[col.key])}</td>`);
+                        let totalActive = 0; days.forEach(d => { if (!(p.activeUntil && normalizeDate(d) > p.activeUntil) && !(p.activeFrom && normalizeDate(d) < p.activeFrom)) totalActive++; });
+                        html += `<td ${cStyle}>${totalActive}</td></tr>`;
                     });
-                    html += '</table>';
-
-                    html += '<br/><table border="1" style="border-collapse: collapse; width: 300px;">';
-                    html += `<tr><td colspan="2" ${headerStyle}>GENEL ÖZET</td></tr>`;
-                    html += `<tr><td ${cellStyle}>TOPLAM</td><td ${cellStyle}>${targetP.length || ''}</td></tr>`;
-                    html += `<tr><td ${cellStyle}>HAZIR</td><td ${cellStyle} style="color: green; font-weight: bold;">${hazirMevcut || ''}</td></tr>`;
-                    html += `<tr><td ${cellStyle}>GAYRI MEVCUT</td><td ${cellStyle} style="color: red; font-weight: bold;">${gayriMevcut || ''}</td></tr>`;
-                    html += '</table>';
-
-                    html += '<br/><table border="1" style="border-collapse: collapse;">';
-                    html += `<tr><td colspan="6" ${headerStyle}>GAYRI MEVCUT BEYANLARI</td></tr>`;
-                    html += `<tr><td ${headerStyle}>SIRA NO</td><td ${headerStyle}>AD SOYAD</td><td ${headerStyle}>BİRİM</td><td ${headerStyle}>TÜR</td><td ${headerStyle}>TARİHLER</td><td ${headerStyle}>GÜN SAYISI</td></tr>`;
-                    gayriMevcutBeyanlarList.forEach((b, idx) => {
-                        const fmtD = (s) => { const parts = s.split('-'); return `${parts[2]}-${parts[1]}-${parts[0]}`; };
-                        const displayUnit = b.birim === 'UÇAK' ? 'TEKNİK EKİP' : b.birim;
-                        html += '<tr>';
-                        html += `<td ${cellStyle}>${idx + 1}</td>`;
-                        html += `<td ${nameStyle}>${b.ad}</td>`;
-                        html += `<td ${cellStyle}>${displayUnit}</td>`;
-                        html += `<td ${redBoldStyle}>${b.tur}</td>`;
-                        html += `<td ${cellStyle}>${fmtD(b.start)} / ${fmtD(b.end)}</td>`;
-                        html += `<td ${cellStyle}>${b.gun || ''}</td>`;
-                        html += '</tr>';
+                    html += `</table><br/><table border="1" style="border-collapse: collapse; width: 350px;"><tr><td colspan="2" ${hStyle}>GENEL ÖZET</td></tr><tr><td ${cStyle} style="text-align:left;">TOPLAM PERSONEL</td><td ${cStyle}>${totalFixed}</td></tr><tr><td ${cStyle} style="text-align:left;">HAZIR</td><td ${cStyle}>${hazirCount}</td></tr><tr><td ${cStyle} style="text-align:left;">GAYRI MEVCUT</td><td ${cStyle}>${gayriMevcutCount}</td></tr></table>`;
+                    html += `<br/><table border="1" style="border-collapse: collapse;"><tr><td colspan="6" ${hStyle}>GAYRI MEVCUT BEYANLARI</td></tr><tr><td ${hStyle}>SIRA NO</td><td ${hStyle}>AD SOYAD</td><td ${hStyle}>BİRİM</td><td ${hStyle}>TÜR</td><td ${hStyle}>TARİHLER</td><td ${hStyle}>GÜN SAYISI</td></tr>`;
+                    Object.values(beyanMap).forEach((b, idx) => {
+                        const fd = (s) => `${s.split('-')[2]}-${s.split('-')[1]}-${s.split('-')[0]}`;
+                        html += `<tr><td ${cStyle}>${idx + 1}</td><td ${nStyle}>${b.ad}</td><td ${cStyle}>${b.birim}</td><td ${rbStyle}>${b.tur}</td><td ${cStyle}>${fd(b.start)} / ${fd(b.end)}</td><td ${cStyle}>${fmt(b.gun)}</td></tr>`;
                     });
-                    html += '</table>';
-
-                    html += '<br/><table border="1" style="border-collapse: collapse; width: 400px;">';
-                    html += `<tr><td colspan="2" ${headerStyle}>KISALTMALAR VE AÇIKLAMALARI</td></tr>`;
-                    html += `<tr><td ${cellStyle}>X</td><td ${nameStyle}>MESAİ / HAZIR</td></tr>`;
-                    html += `<tr><td ${cellStyle}>HT</td><td ${nameStyle}>HAFTA TATİLİ</td></tr>`;
-                    html += `<tr><td ${cellStyle}>G.İ</td><td ${nameStyle}>GÜNLÜK İZİN</td></tr>`;
-                    html += `<tr><td ${cellStyle}>F.M.İ</td><td ${nameStyle}>FAZLA MESAİ İZNİ</td></tr>`;
-                    html += `<tr><td ${cellStyle}>Y.F.M.İ</td><td ${nameStyle}>YARIM GÜN FAZLA MESAİ İZNİ</td></tr>`;
-                    html += `<tr><td ${cellStyle}>Yİ</td><td ${nameStyle}>YILLIK İZİN</td></tr>`;
-                    html += `<tr><td ${cellStyle}>M.İ</td><td ${nameStyle}>MAZERET İZNİ</td></tr>`;
-                    html += `<tr><td ${cellStyle}>Y.G.İ</td><td ${nameStyle}>YARIM GÜN İZİN</td></tr>`;
-                    html += `<tr><td ${cellStyle}>RAPOR</td><td ${nameStyle}>RAPOR</td></tr>`;
-                    html += `<tr><td ${cellStyle}>HASTANE</td><td ${nameStyle}>HASTANE</td></tr>`;
-                    html += `<tr><td ${cellStyle}>KURS</td><td ${nameStyle}>KURS</td></tr>`;
-                    html += `<tr><td ${cellStyle}>İDARİ İZİN</td><td ${nameStyle}>İDARİ İZİN</td></tr>`;
-                    html += '</table>';
-
-                    html += '</body></html>';
-                    const link = document.createElement('a');
-                    link.href = URL.createObjectURL(new Blob(['\uFEFF', html], { type: 'application/vnd.ms-excel;charset=utf-8' }));
-                    link.download = `Yoklama_Raporu_${isDaily ? getTodayString() : (dates.start + '_' + dates.end)}.xls`;
-                    link.click();
-
-                } catch(e) { 
-                    alert("Rapor hatası: " + e);
-                } finally {
-                    setLoading(false);
-                }
+                    html += `</table><br/><table border="1" style="border-collapse: collapse; width: 450px;"><tr><td colspan="2" ${hStyle}>KISALTMALAR VE AÇIKLAMALARI</td></tr>`;
+                    const abbrs = [["X", "MESAİ / HAZIR"], ["HT", "HAFTA TATİLİ"], ["G.İ", "GÜNLÜK İZİN"], ["F.M.İ", "FAZLA MESAİ İZNİ"], ["Yİ", "YILLIK İZİN"], ["M.İ", "MAZERET İZNİ"], ["Y.G.İ", "YARIM GÜN İZİN"], ["RAPOR", "RAPOR"], ["HASTANE", "HASTANE"], ["KURS", "KURS"], ["İDARİ İZİN", "İDARİ İZİN"]];
+                    abbrs.forEach(a => html += `<tr><td ${cStyle}>${a[0]}</td><td ${nStyle} style="padding-left:10px;">${a[1]}</td></tr>`);
+                    html += '</table></body></html>';
+                    const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob(['\uFEFF', html], { type: 'application/vnd.ms-excel;charset=utf-8' }));
+                    link.download = `Yoklama_Raporu_${isDaily ? getTodayString() : (dates.start + '_' + dates.end)}.xls`; link.click();
+                } catch(e) { alert("Rapor hatası: " + e); } finally { setLoading(false); }
             };
 
             const aircraftTagsMatch = (ac, p) => {
@@ -1943,7 +1784,6 @@
                                 personId={p.id}
                                 state={s}
                                 isWeeklyMode={isWeeklyMode}
-                                aircraftModel={selModel}
                                 onChangeStatus={handleStatusChangeWithAuth}
                                 onChangeDetail={handleDetailChangeWithAuth}
                             />
@@ -1966,7 +1806,7 @@
              if (loading) return (
                 <div className="fixed inset-0 bg-black/80 z-50 flex flex-col items-center justify-center">
                     <div className="w-64 h-64 mb-4 rounded-full border-8 border-forest-400 overflow-hidden shadow-[0_0_40px_rgba(0,0,0,0.6)]">
-                        <img src="https://media4.giphy.com/media/v1.Y2lkPTc5MGI3NjExNW9uenhqZXdxbGd6YWNxc2UwempmOXNyaG15NGtuZTJmb3EyaTNqZCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9cw/1rrxPs1nb3IjwmbiXw/giphy.gif" alt="Loading..." className="w-full h-full object-cover" />
+                        <img src="https://media4.giphy.com/media/v1.Y2lkPTc5MGI3NjExNW9uenhqZXdxbGd6YWNxc2UwempmOXNyaG15NGtuZTJmb3EyaTNqZCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/1rrxPs1nb3IjwmbiXw/giphy.gif" alt="Loading..." className="w-full h-full object-cover" />
                     </div>
                     <div className="text-white text-xl font-bold animate-pulse">Bekleyiniz</div>
                 </div>
@@ -2110,3 +1950,4 @@
     </script>
 </body>
 </html>
+
