@@ -1622,7 +1622,8 @@
                         if (titleUpper.includes('B-360')) return "B-360";
                         if (titleUpper.includes('T-70')) return "T-70";
                         if (titleUpper.includes('AT-802')) return "AT-802";
-                        if (titleUpper.includes('TEKNİ') || titleUpper.includes('MÜHENDİS')) return "TEKNİK EKİP";
+                        if (titleUpper.includes('MEMUR') || titleUpper.includes('MÜHENDİS')) return "YER DESTEK";
+                        if (titleUpper.includes('TEKNİ') || titleUpper.includes('UÇAK')) return "TEKNİK EKİP";
                         if (titleUpper.includes('MEMUR') || titleUpper.includes('İŞÇİ') || titleUpper.includes('ŞÖFÖR') || [Role.DRIVER, Role.CLEANING, Role.KITCHEN, Role.TEA_SERVICE, Role.OTHER].includes(p.role)) return "YER DESTEK";
                         return "İDARİ";
                     };
