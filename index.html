@@ -1600,18 +1600,11 @@
                 }
             };
             const exportExcel = async (isDaily = false) => {
-               setLoading(true);
+                setLoading(true);
                 try {
                     const freshRecs = storageService.getAttendanceSync();
                     const finalPersonnel = await storageService.getPersonnelSync();
                     const aircraftList = await storageService.getAircraft();
-                    const models = [...new Set(aircraftList.map(a => a.model))].filter(m => m && m.length > 1).sort();
-                    const specificAircraftTags = models.filter(m => ![AircraftModel.YER_DESTEK, AircraftModel.TEKNIK_EKIP, AircraftModel.IDARI_BIRIM].includes(m)).map(m => m.replace(/[^a-zA-Z0-9ğüşıöçĞÜŞİÖÇ]/g, '').toLocaleUpperCase('tr-TR'));
-
-                    let targetP = finalPersonnel.filter(p => p.role !== Role.PILOT).sort((a, b) => (a.rank || 999) - (b.rank || 999));
-                    const startDateForFilter = isDaily ? getTodayString() : dates.start, endDateForFilter = isDaily ? getTodayString() : dates.end;
-                    targetP = targetP.filter(p => !(p.activeUntil && p.activeUntil < startDateForFilter) && !(p.activeFrom && p.activeFrom > endDateForFilter));
-
                     const unitOrder = ["YÖNETİM", "BELL-429", "C-650", "B-360", "T-70", "AT-802", "TEKNİK EKİP", "YER DESTEK", "İDARİ"];
                     const fUK = (p) => {
                         if (YONETIM_NAMES.includes(p.fullName)) return "YÖNETİM";
@@ -1622,43 +1615,39 @@
                         if (titleUpper.includes('B-360')) return "B-360";
                         if (titleUpper.includes('T-70')) return "T-70";
                         if (titleUpper.includes('AT-802')) return "AT-802";
-                        if (titleUpper.includes('MEMUR') || titleUpper.includes('MÜHENDİS')) return "YER DESTEK";
                         if (titleUpper.includes('TEKNİ') || titleUpper.includes('UÇAK')) return "TEKNİK EKİP";
-                        if (titleUpper.includes('MEMUR') || titleUpper.includes('İŞÇİ') || titleUpper.includes('ŞÖFÖR') || [Role.DRIVER, Role.CLEANING, Role.KITCHEN, Role.TEA_SERVICE, Role.OTHER].includes(p.role)) return "YER DESTEK";
+                        if (titleUpper.includes('MEMUR') || titleUpper.includes('İŞÇİ') || titleUpper.includes('MÜHENDİS') || titleUpper.includes('ŞÖFÖR') || [Role.DRIVER, Role.CLEANING, Role.KITCHEN, Role.TEA_SERVICE, Role.OTHER].includes(p.role)) return "YER DESTEK";
                         return "İDARİ";
                     };
-                    
+                    let targetP = [...finalPersonnel];
+                    const startDateForFilter = isDaily ? getTodayString() : dates.start, endDateForFilter = isDaily ? getTodayString() : dates.end;
+                    targetP = targetP.filter(p => !(p.activeUntil && p.activeUntil < startDateForFilter) && !(p.activeFrom && p.activeFrom > endDateForFilter));
                     targetP.sort((a, b) => { const uA = fUK(a); const uB = fUK(b); let idxA = unitOrder.indexOf(uA); let idxB = unitOrder.indexOf(uB); if (idxA === -1) idxA = unitOrder.length; if (idxB === -1) idxB = unitOrder.length; return idxA !== idxB ? idxA - idxB : (a.rank || 999) - (b.rank || 999); });
-
                     let days = [];
-                    if (isDaily) days.push(new Date(getTodayString().split('-')[0], getTodayString().split('-')[1]-1, getTodayString().split('-')[2], 12,0,0));
-                    else {
-                        let current = new Date(dates.start.split('-')[0], dates.start.split('-')[1]-1, dates.start.split('-')[2], 12,0,0), end = new Date(dates.end.split('-')[0], dates.end.split('-')[1]-1, dates.end.split('-')[2], 12,0,0);
-                        while(current <= end) { days.push(new Date(current)); current.setDate(current.getDate() + 1); }
-                    }
-
+                    if (isDaily) { days.push(new Date(getTodayString().split('-')[0], getTodayString().split('-')[1]-1, getTodayString().split('-')[2], 12,0,0)); }
+                    else { let current = new Date(dates.start.split('-')[0], dates.start.split('-')[1]-1, dates.start.split('-')[2], 12,0,0), end = new Date(dates.end.split('-')[0], dates.end.split('-')[1]-1, dates.end.split('-')[2], 12,0,0); while(current <= end) { days.push(new Date(current)); current.setDate(current.getDate() + 1); } }
                     const uniqueAbsentIds = new Set();
-                    const beyanMap = {};
+                    const beyanList = []; const addedPeriods = new Set();
                     targetP.forEach(p => {
-                        let pAbsences = [];
                         days.forEach(d => {
                             const dStr = normalizeDate(d), r = freshRecs.find(x => x.personId === p.id && x.date === dStr);
                             const absenceStates = [AttendanceStatus.LEAVE, AttendanceStatus.SICK, AttendanceStatus.HOSPITAL, AttendanceStatus.PUBLIC_HOLIDAY, AttendanceStatus.OTHER, AttendanceStatus.ABSENT];
-                            if (r && absenceStates.includes(r.status)) pAbsences.push(r);
+                            if (r && absenceStates.includes(r.status)) {
+                                uniqueAbsentIds.add(p.id);
+                                const pRecs = freshRecs.filter(x => x.personId === p.id).sort((a,b) => a.date.localeCompare(b.date));
+                                let curIdx = pRecs.findIndex(x => x.date === dStr);
+                                let sI = curIdx; while(sI > 0 && absenceStates.includes(pRecs[sI-1].status)) sI--;
+                                let eI = curIdx; while(eI < pRecs.length - 1 && absenceStates.includes(pRecs[eI+1].status)) eI++;
+                                const rStart = pRecs[sI].date, rEnd = pRecs[eI].date, key = `${p.id}-${rStart}-${rEnd}`;
+                                if (!addedPeriods.has(key)) {
+                                    addedPeriods.add(key); let totalG = 0; let hasR = false;
+                                    for(let k = sI; k <= eI; k++) { totalG += (pRecs[k].leaveType === LeaveType.HALF_DAY || pRecs[k].leaveType === LeaveType.HALF_OVERTIME ? 0.5 : 1); if(pRecs[k].status === AttendanceStatus.SICK || pRecs[k].status === AttendanceStatus.HOSPITAL) hasR = true; }
+                                    let turL = r.status === AttendanceStatus.LEAVE ? r.leaveType : r.status; if(hasR) turL = pRecs.slice(sI, eI+1).find(x => x.status === AttendanceStatus.SICK || x.status === AttendanceStatus.HOSPITAL).status === AttendanceStatus.SICK ? 'RAPOR' : 'HASTANE';
+                                    beyanList.push({ ad: p.fullName, birim: fUK(p), tur: turL, start: rStart, end: rEnd, gun: totalG });
+                                }
+                            }
                         });
-                        if (pAbsences.length > 0) {
-                            uniqueAbsentIds.add(p.id);
-                            const tCounts = {};
-                            pAbsences.forEach(ra => {
-                                const lbl = ra.status === AttendanceStatus.LEAVE ? ra.leaveType : (ra.status === AttendanceStatus.SICK ? 'RAPOR' : (ra.status === AttendanceStatus.HOSPITAL ? 'HASTANE' : (ra.status === AttendanceStatus.PUBLIC_HOLIDAY ? 'İDARİ İZİN' : 'DİĞER')));
-                                tCounts[lbl] = (tCounts[lbl] || 0) + (ra.leaveType === LeaveType.HALF_DAY ? 0.5 : 1);
-                            });
-                            const domType = Object.keys(tCounts).reduce((a, b) => tCounts[a] > tCounts[b] ? a : b);
-                            const sumG = Object.values(tCounts).reduce((a, b) => a + b, 0);
-                            beyanMap[p.id] = { ad: p.fullName, birim: fUK(p), tur: domType, start: pAbsences[0].date, end: pAbsences[pAbsences.length-1].date, gun: sumG };
-                        }
                     });
-
                     const totalFixed = targetP.length, gayriMevcutCount = uniqueAbsentIds.size, hazirCount = totalFixed - gayriMevcutCount;
                     const allCols = [{ key: 'w', label: 'X' }, { key: 'ht', label: 'HT' }, { key: 'yi', label: 'Yİ' }, { key: 'mi', label: 'Mİ' }, { key: 'gi', label: 'Gİ' }, { key: 'ygi', label: 'YGİ' }, { key: 'fmi', label: 'FMİ' }, { key: 'yfmi', label: 'YFMİ' }, { key: 'rt', label: 'İİ' }, { key: 'r', label: 'R' }, { key: 'h', label: 'H' }, { key: 'k', label: 'K' }, { key: 'ot', label: 'D' }];
                     const stats = targetP.map(p => {
@@ -1720,7 +1709,7 @@
                     });
                     html += `</table><br/><table border="1" style="border-collapse: collapse; width: 350px;"><tr><td colspan="2" ${hStyle}>GENEL ÖZET</td></tr><tr><td ${cStyle} style="text-align:left;">TOPLAM PERSONEL</td><td ${cStyle}>${totalFixed}</td></tr><tr><td ${cStyle} style="text-align:left;">HAZIR</td><td ${cStyle}>${hazirCount}</td></tr><tr><td ${cStyle} style="text-align:left;">GAYRI MEVCUT</td><td ${cStyle}>${gayriMevcutCount}</td></tr></table>`;
                     html += `<br/><table border="1" style="border-collapse: collapse;"><tr><td colspan="6" ${hStyle}>GAYRI MEVCUT BEYANLARI</td></tr><tr><td ${hStyle}>SIRA NO</td><td ${hStyle}>AD SOYAD</td><td ${hStyle}>BİRİM</td><td ${hStyle}>TÜR</td><td ${hStyle}>TARİHLER</td><td ${hStyle}>GÜN SAYISI</td></tr>`;
-                    Object.values(beyanMap).forEach((b, idx) => {
+                    beyanList.forEach((b, idx) => {
                         const fd = (s) => `${s.split('-')[2]}-${s.split('-')[1]}-${s.split('-')[0]}`;
                         html += `<tr><td ${cStyle}>${idx + 1}</td><td ${nStyle}>${b.ad}</td><td ${cStyle}>${b.birim}</td><td ${rbStyle}>${b.tur}</td><td ${cStyle}>${fd(b.start)} / ${fd(b.end)}</td><td ${cStyle}>${fmt(b.gun)}</td></tr>`;
                     });
@@ -1733,73 +1722,26 @@
                 } catch(e) { alert("Rapor hatası: " + e); } finally { setLoading(false); }
             };
 
-            const aircraftTagsMatch = (ac, p) => {
-                const titleUpper = (p.title || '').toLocaleUpperCase('tr-TR');
-                const tClean = titleUpper.replace(/[^a-zA-Z0-9ğüşıöçĞÜŞİÖÇ]/g, '');
-                const mNameNormalized = ac.model.replace(/[^a-zA-Z0-9ğüşıöçĞÜŞİÖÇ]/g, '').toLocaleUpperCase('tr-TR');
-                return tClean.includes(mNameNormalized);
-            };
-
             const renderPersonRow = (p, i) => {
                 const s = att[p.id] || {};
                 const isWeeklyMode = rangeStartDate !== rangeEndDate;
                 let shouldBlur = false;
-                
                 if (isWeeklyMode) {
-                    const daysInRange = getDaysInRange(rangeStartDate, rangeEndDate);
-                    const recordsInRange = daysInRange.map(d => {
-                        const dStr = normalizeDate(d);
-                        return allRecs.find(r => r.personId === p.id && r.date === dStr);
-                    }).filter(r => !!r);
-
-                    if (recordsInRange.length > 0) {
-                        if (recordsInRange.length < daysInRange.length) {
-                            shouldBlur = true;
-                        } else {
-                            const firstRec = recordsInRange[0];
-                            const isUniform = recordsInRange.every(r => 
-                                r.status === firstRec.status &&
-                                r.dutyType === firstRec.dutyType &&
-                                r.dutyLocation === firstRec.dutyLocation &&
-                                r.leaveType === firstRec.leaveType &&
-                                r.note === firstRec.note
-                            );
-                            if (!isUniform) shouldBlur = true;
-                        }
-                    }
+                    const dInR = getDaysInRange(rangeStartDate, rangeEndDate);
+                    const rInR = dInR.map(d => { const dStr = normalizeDate(d); return allRecs.find(r => r.personId === p.id && r.date === dStr); }).filter(r => !!r);
+                    if (rInR.length > 0) { if (rInR.length < dInR.length) shouldBlur = true; else { const fR = rInR[0]; if (!rInR.every(r => r.status === fR.status && r.dutyType === fR.dutyType && r.dutyLocation === fR.dutyLocation && r.leaveType === fR.leaveType)) shouldBlur = true; } }
                 }
-
                 return (
                     <div key={p.id} className="relative group">
-                        <div className={`bg-forest-950/40 p-3 rounded border border-forest-800 flex flex-col xl:flex-row gap-4 items-start xl:items-center justify-between transition-all duration-300 ${shouldBlur ? 'opacity-30 blur-[2px] pointer-events-none select-none' : ''}`}>
+                        <div className={`bg-forest-950/40 p-3 rounded border border-forest-800 flex flex-col xl:flex-row gap-4 items-start xl:items-center justify-between transition-all duration-300 ${shouldBlur ? 'opacity-30 blur-[2px] pointer-events-none' : ''}`}>
                             <div className="w-full xl:w-1/4 flex gap-2 items-center">
-                                {rangeStartDate !== rangeEndDate && (
-                                    <button onClick={() => openDetailModalWithAuth(p)} className="bg-blue-600 hover:bg-blue-500 text-white p-1.5 rounded shadow-sm" title="Günlük Detay Girişi">
-                                        <CalendarDays size={18} />
-                                    </button>
-                                )}
-                                <span className="text-forest-500 w-6 text-center">{i + 1}</span>
+                                {rangeStartDate !== rangeEndDate && <button onClick={() => openDetailModalWithAuth(p)} className="bg-blue-600 p-1.5 rounded"><CalendarDays size={18} /></button>}
+                                <span className="text-forest-500 w-6">{i + 1}</span>
                                 <div><div className="text-white font-medium">{p.fullName}</div><div className="text-xs text-forest-400">{p.title || p.role}</div></div>
                             </div>
-                            <AttendanceControl
-                                personId={p.id}
-                                state={s}
-                                isWeeklyMode={isWeeklyMode}
-                                onChangeStatus={handleStatusChangeWithAuth}
-                                onChangeDetail={handleDetailChangeWithAuth}
-                            />
+                            <AttendanceControl personId={p.id} state={s} isWeeklyMode={isWeeklyMode} aircraftModel={selModel} onChangeStatus={handleStatusChangeWithAuth} onChangeDetail={handleDetailChangeWithAuth} />
                         </div>
-                        {shouldBlur && (
-                            <div className="absolute inset-0 z-10 flex items-center justify-center">
-                                <Button 
-                                    variant="primary" 
-                                    className="shadow-2xl border-2 border-forest-400 scale-110 hover:scale-125 transition-transform"
-                                    onClick={() => openDetailModalWithAuth(p)}
-                                >
-                                    <Edit2 size={16} className="mr-2" /> Ayrıntıyı Gör ve Düzenle
-                                </Button>
-                            </div>
-                        )}
+                        {shouldBlur && <div className="absolute inset-0 flex items-center justify-center"><Button onClick={() => openDetailModalWithAuth(p)}><Edit2 size={16} className="mr-2" /> Düzenle</Button></div>}
                     </div>
                 );
             };
@@ -1807,7 +1749,7 @@
              if (loading) return (
                 <div className="fixed inset-0 bg-black/80 z-50 flex flex-col items-center justify-center">
                     <div className="w-64 h-64 mb-4 rounded-full border-8 border-forest-400 overflow-hidden shadow-[0_0_40px_rgba(0,0,0,0.6)]">
-                        <img src="https://media4.giphy.com/media/v1.Y2lkPTc5MGI3NjExNW9uenhqZXdxbGd6YWNxc2UwempmOXNyaG15NGtuZTJmb3EyaTNqZCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/1rrxPs1nb3IjwmbiXw/giphy.gif" alt="Loading..." className="w-full h-full object-cover" />
+                        <img src="https://media4.giphy.com/media/v1.Y2lkPTc5MGI3NjExNW9uenhqZXdxbGd6YWNxc2UwempmOXNyaG15NGtuZTJmb3EyaTNqZCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9cw/1rrxPs1nb3IjwmbiXw/giphy.gif" alt="Loading..." className="w-full h-full object-cover" />
                     </div>
                     <div className="text-white text-xl font-bold animate-pulse">Bekleyiniz</div>
                 </div>
@@ -1818,22 +1760,17 @@
                     <h1 className="text-3xl font-bold text-white mb-4">Yoklama Takip</h1>
                     <Card title="Birim Seçiniz">
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                            {(() => {
-                                const yonetimStat = dashboardStatus['YÖNETİM'] || { missing: true };
-                                return (
-                                    <button onClick={() => setSelModel('YÖNETİM')} className={`p-6 rounded border-2 font-bold flex flex-col items-center transition-all group relative overflow-hidden ${!yonetimStat.missing ? 'bg-teal-600 border-teal-400 hover:bg-teal-500 text-white' : 'bg-forest-800 border-red-500 text-white shadow-[inset_0_0_10px_rgba(220,38,38,0.5)]'}`}>
-                                        <Users size={32} className="mb-2" /> YÖNETİM {yonetimStat.missing && <span className="text-[10px] bg-red-600 px-2 py-0.5 rounded mt-2 animate-pulse w-full block">GÜNLÜK YOKLAMA GİRİLMEDİ</span>}
-                                    </button>
-                                );
-                            })()}
+                             <button onClick={() => setSelModel('YÖNETİM')} className={`p-6 rounded border-2 font-bold flex flex-col items-center transition-all group relative overflow-hidden ${!dashboardStatus['YÖNETİM']?.missing ? 'bg-teal-600 border-teal-400 hover:bg-teal-500 text-white' : 'bg-forest-800 border-forest-600 hover:bg-forest-700 text-white'}`}>
+                                <Users className="mb-2" /> YÖNETİM
+                                {dashboardStatus['YÖNETİM']?.missing && <span className="text-[10px] bg-red-600 px-2 py-0.5 rounded mt-2 animate-pulse w-full block">YOKLAMA GİRİLMEDİ</span>}
+                            </button>
                             {models.map(m => {
                                 const stat = dashboardStatus[m] || { pilotMissing: false, techMissing: false, groundMissing: false };
                                 const hasIssue = stat.pilotMissing || stat.techMissing || stat.groundMissing;
                                 return (
                                 <button key={m} onClick={() => setSelModel(m)} className={`p-6 rounded border-2 font-bold flex flex-col items-center transition-all group relative overflow-hidden ${!hasIssue ? 'bg-teal-600 border-teal-400 hover:bg-teal-500 text-white' : 'bg-forest-800 border-forest-600 hover:bg-forest-700 text-white'}`}>
-                                    <ModelIcon category={inv.find(a => a.model === m)?.category} model={m} className="mb-2" />
-                                    {m}
-                                    {stat.groundMissing && <span className="text-[10px] bg-red-600 px-2 py-0.5 rounded mt-2 animate-pulse w-full block">GÜNLÜK YOKLAMA GİRİLMEDİ</span>}
+                                    <ModelIcon category={inv.find(a => a.model === m)?.category} model={m} className="mb-2" /> {m}
+                                    {stat.groundMissing && <span className="text-[10px] bg-red-600 px-2 py-0.5 rounded mt-2 animate-pulse w-full block">YOKLAMA GİRİLMEDİ</span>}
                                     {stat.pilotMissing && <span className="text-[10px] bg-orange-600 px-2 py-0.5 rounded mt-1 animate-pulse w-full block">PİLOT GİRİLMEDİ</span>}
                                     {stat.techMissing && <span className="text-[10px] bg-red-600 px-2 py-0.5 rounded mt-1 animate-pulse w-full block">TEKNİSYEN GİRİLMEDİ</span>}
                                 </button>
