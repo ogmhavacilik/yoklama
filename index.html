@@ -1207,9 +1207,9 @@
                          const [y, m, d] = referenceDate.split('-').map(Number);
                          const current = new Date(y, m-1, d, 12,0,0);
                          const dayOfWeek = current.getDay();
-                         const diffToSat = 6 - dayOfWeek; // Days until Saturday
+                         const diffToSat = (dayOfWeek === 0) ? -1 : (6 - dayOfWeek); // Days until Saturday
                          const satDate = new Date(current);
-                         satDate.setDate(current.getDate() + dayOfWeek === 0 ? current.getDate()-1 : current.getDate() + (6 - dayOfWeek));
+                         satDate.setDate(current.getDate() + diffToSat);
                          const satStr = normalizeDate(satDate);
                          
                          const satRec = allRecs.find(x => x.personId === p.id && x.date === satStr);
@@ -1604,7 +1604,6 @@
                 try {
                     const freshRecs = storageService.getAttendanceSync();
                     const finalPersonnel = await storageService.getPersonnelSync();
-                    const aircraftList = await storageService.getAircraft();
                     const unitOrder = ["YÖNETİM", "BELL-429", "C-650", "B-360", "T-70", "AT-802", "TEKNİK EKİP", "YER DESTEK", "İDARİ"];
                     const fUK = (p) => {
                         if (YONETIM_NAMES.includes(p.fullName)) return "YÖNETİM";
@@ -1622,10 +1621,25 @@
                     let targetP = [...finalPersonnel];
                     const startDateForFilter = isDaily ? getTodayString() : dates.start, endDateForFilter = isDaily ? getTodayString() : dates.end;
                     targetP = targetP.filter(p => !(p.activeUntil && p.activeUntil < startDateForFilter) && !(p.activeFrom && p.activeFrom > endDateForFilter));
-                    targetP.sort((a, b) => { const uA = fUK(a); const uB = fUK(b); let idxA = unitOrder.indexOf(uA); let idxB = unitOrder.indexOf(uB); if (idxA === -1) idxA = unitOrder.length; if (idxB === -1) idxB = unitOrder.length; return idxA !== idxB ? idxA - idxB : (a.rank || 999) - (b.rank || 999); });
+                    targetP.sort((a, b) => { 
+                        const uA = fUK(a); 
+                        const uB = fUK(b); 
+                        let idxA = unitOrder.indexOf(uA); 
+                        let idxB = unitOrder.indexOf(uB); 
+                        if (idxA === -1) idxA = unitOrder.length; 
+                        if (idxB === -1) idxB = unitOrder.length; 
+                        return idxA !== idxB ? idxA - idxB : (a.rank || 999) - (b.rank || 999);
+                    });
                     let days = [];
-                    if (isDaily) { days.push(new Date(getTodayString().split('-')[0], getTodayString().split('-')[1]-1, getTodayString().split('-')[2], 12,0,0)); }
-                    else { let current = new Date(dates.start.split('-')[0], dates.start.split('-')[1]-1, dates.start.split('-')[2], 12,0,0), end = new Date(dates.end.split('-')[0], dates.end.split('-')[1]-1, dates.end.split('-')[2], 12,0,0); while(current <= end) { days.push(new Date(current)); current.setDate(current.getDate() + 1); } }
+                    if (isDaily) { 
+                        const td = getTodayString().split('-');
+                        days.push(new Date(td[0], td[1]-1, td[2], 12,0,0)); 
+                    }
+                    else { 
+                        const sd = dates.start.split('-'), ed = dates.end.split('-');
+                        let current = new Date(sd[0], sd[1]-1, sd[2], 12,0,0), end = new Date(ed[0], ed[1]-1, ed[2], 12,0,0); 
+                        while(current <= end) { days.push(new Date(current)); current.setDate(current.getDate() + 1); } 
+                    }
                     const uniqueAbsentIds = new Set();
                     const beyanList = []; const addedPeriods = new Set();
                     targetP.forEach(p => {
@@ -1649,7 +1663,11 @@
                         });
                     });
                     const totalFixed = targetP.length, gayriMevcutCount = uniqueAbsentIds.size, hazirCount = totalFixed - gayriMevcutCount;
-                    const allCols = [{ key: 'w', label: 'X' }, { key: 'ht', label: 'HT' }, { key: 'yi', label: 'Yİ' }, { key: 'mi', label: 'Mİ' }, { key: 'gi', label: 'Gİ' }, { key: 'ygi', label: 'YGİ' }, { key: 'fmi', label: 'FMİ' }, { key: 'yfmi', label: 'YFMİ' }, { key: 'rt', label: 'İİ' }, { key: 'r', label: 'R' }, { key: 'h', label: 'H' }, { key: 'k', label: 'K' }, { key: 'ot', label: 'D' }];
+                    const allPossibleCols = [
+                        { key: 'w', label: 'X' }, { key: 'ht', label: 'HT' }, 
+                        { key: 'gp', label: 'PLANLI' }, { key: 'gu', label: 'PLANSIZ' },
+                        { key: 'yi', label: 'Yİ' }, { key: 'mi', label: 'Mİ' }, { key: 'gi', label: 'Gİ' }, { key: 'ygi', label: 'YGİ' }, { key: 'fmi', label: 'FMİ' }, { key: 'yfmi', label: 'YFMİ' }, { key: 'rt', label: 'İİ' }, { key: 'r', label: 'R' }, { key: 'h', label: 'H' }, { key: 'k', label: 'K' }, { key: 'ot', label: 'D' }
+                    ];
                     const stats = targetP.map(p => {
                         let s = { w: 0, gp: 0, gu: 0, ht: 0, yi: 0, mi: 0, gi: 0, ygi: 0, fmi: 0, yfmi: 0, rt: 0, r: 0, h: 0, k: 0, ot: 0 };
                         days.forEach(d => {
@@ -1657,7 +1675,7 @@
                             if (!((p.activeUntil && dStr > p.activeUntil) || (p.activeFrom && dStr < p.activeFrom))) {
                                 if (r) {
                                     if (r.status === AttendanceStatus.PRESENT) { if (isWe) s.ht++; else s.w++; }
-                                    else if (r.status === AttendanceStatus.DUTY) { if (r.dutyType === DutyType.UNPLANNED) s.gu++; else s.gp++; }
+                                    else if (r.status === AttendanceStatus.DUTY) { if ((r.dutyType || DutyType.PLANNED) === DutyType.UNPLANNED) s.gu++; else s.gp++; }
                                     else if (r.status === AttendanceStatus.COURSE) s.k++;
                                     else if (r.status === AttendanceStatus.SICK) s.r++;
                                     else if (r.status === AttendanceStatus.HOSPITAL) s.h++;
@@ -1673,9 +1691,14 @@
                         });
                         return { id: p.id, s };
                     });
-                    const activeCols = allCols.filter(c => stats.some(st => st.s[c.key] > 0));
-                    const fmt = (n) => n === 0 ? '' : String(n).replace('.', ',');
-                    const hStyle = 'style="background-color: #c6e0b4; font-weight: bold; text-align: center; border: 1px solid #000;"', cStyle = 'style="border: 1px solid #000; text-align: center; mso-number-format:\'\@\';"', nStyle = 'style="border: 1px solid #000; text-align: left;"', rbStyle = 'style="border: 1px solid #000; text-align: center; color: #ff0000; font-weight: bold; mso-number-format:\'\@\';"';
+                    const activeCols = allPossibleCols.filter(c => stats.some(st => st.s[c.key] > 0));
+                    const fmt = (n) => (n === 0 || n === '0') ? '' : (typeof n === 'number' ? n : parseFloat(String(n).replace(',', '.')));
+                    const hStyle = 'style="background-color: #c6e0b4; font-weight: bold; text-align: center; border: 1px solid #000;"', 
+                          cStyle = 'style="border: 1px solid #000; text-align: center; mso-number-format:\'\@\';"', 
+                          nStyle = 'style="border: 1px solid #000; text-align: left;"', 
+                          rbStyle = 'style="border: 1px solid #000; text-align: center; color: #ff0000; font-weight: bold; mso-number-format:\'\@\';"',
+                          numStyle = 'style="border: 1px solid #000; text-align: center; mso-number-format:\'\#\,\#\#0\.0\';"',
+                          seqStyle = 'style="border: 1px solid #000; text-align: center; mso-number-format:0;"';
                     let html = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="UTF-8"><meta http-equiv="content-type" content="application/vnd.ms-excel; charset=UTF-8"></head><body>';
                     html += '<table border="1" style="border-collapse: collapse; font-family: Calibri;">';
                     html += `<tr><td colspan="3" ${hStyle}>${days[0].toLocaleDateString('tr-TR', { month: 'long', year: 'numeric' }).toLocaleUpperCase('tr-TR')}</td>`;
@@ -1686,13 +1709,14 @@
                     activeCols.forEach(() => html += `<td ${hStyle}></td>`); html += `<td ${hStyle}></td></tr>`;
                     let lastUnit = null;
                     targetP.forEach((p, i) => {
-                        const pUnit = fUK(p);
+                        const pUnitRaw = fUK(p);
+                        const pUnit = pUnitRaw.toLocaleUpperCase('tr-TR').includes('UÇAK') ? 'TEKNİK EKİP' : pUnitRaw;
                         if (pUnit !== lastUnit) {
                             html += `<tr><td colspan="${3 + days.length + activeCols.length + 1}" style="background-color: #228b22; color: white; font-weight: bold; text-align: left; border: 1px solid #000; padding: 5px;">${pUnit}</td></tr>`;
                             lastUnit = pUnit;
                         }
                         const s = stats.find(st => st.id === p.id).s;
-                        html += `<tr><td ${cStyle}>${i + 1}</td><td colspan="2" ${nStyle}>${p.fullName}</td>`;
+                        html += `<tr><td ${seqStyle}>${Math.floor(i + 1)}</td><td colspan="2" ${nStyle}>${p.fullName}</td>`;
                         days.forEach(d => {
                             const dStr = normalizeDate(d), r = freshRecs.find(x => x.personId === p.id && x.date === dStr), isWe = d.getDay() === 0 || d.getDay() === 6;
                             let ct = isWe ? 'HT' : 'X';
@@ -1701,20 +1725,21 @@
                                 if (r.status === AttendanceStatus.DUTY || r.status === AttendanceStatus.COURSE) ct = (r.dutyLocation || (r.status === AttendanceStatus.COURSE ? 'KURS' : 'GÖREV')).toLocaleUpperCase('tr-TR');
                                 else ct = r.status === AttendanceStatus.LEAVE ? r.leaveType : (r.status === AttendanceStatus.SICK ? 'R' : (r.status === AttendanceStatus.HOSPITAL ? 'H' : (r.status === AttendanceStatus.PUBLIC_HOLIDAY ? 'İ.İ.' : r.status)));
                             }
-                            html += `<td ${r && ![AttendanceStatus.PRESENT, AttendanceStatus.DUTY].includes(r.status) ? rbStyle : cStyle}>${ct}</td>`;
+                            html += `<td ${r && ![AttendanceStatus.PRESENT, AttendanceStatus.DUTY].includes(r.status) ? rbStyle : cStyle}>${(ct === 'MEVCUT' || ct === 'Mevcut') ? '' : ct}</td>`;
                         });
-                        activeCols.forEach(col => html += `<td ${cStyle}>${fmt(s[col.key])}</td>`);
+                        activeCols.forEach(col => html += `<td ${numStyle}>${fmt(s[col.key])}</td>`);
                         let totalActive = 0; days.forEach(d => { if (!(p.activeUntil && normalizeDate(d) > p.activeUntil) && !(p.activeFrom && normalizeDate(d) < p.activeFrom)) totalActive++; });
-                        html += `<td ${cStyle}>${totalActive}</td></tr>`;
+                        html += `<td ${seqStyle}>${Math.floor(totalActive)}</td></tr>`;
                     });
-                    html += `</table><br/><table border="1" style="border-collapse: collapse; width: 350px;"><tr><td colspan="2" ${hStyle}>GENEL ÖZET</td></tr><tr><td ${cStyle} style="text-align:left;">TOPLAM PERSONEL</td><td ${cStyle}>${totalFixed}</td></tr><tr><td ${cStyle} style="text-align:left;">HAZIR</td><td ${cStyle}>${hazirCount}</td></tr><tr><td ${cStyle} style="text-align:left;">GAYRI MEVCUT</td><td ${cStyle}>${gayriMevcutCount}</td></tr></table>`;
+                    html += `</table><br/><table border="1" style="border-collapse: collapse; width: 350px;"><tr><td colspan="2" ${hStyle}>GENEL ÖZET</td></tr><tr><td ${nStyle}>TOPLAM PERSONEL</td><td ${seqStyle}>${Math.floor(totalFixed)}</td></tr><tr><td ${nStyle}>HAZIR</td><td ${seqStyle}>${Math.floor(hazirCount)}</td></tr><tr><td ${nStyle}>GAYRI MEVCUT</td><td ${seqStyle}>${Math.floor(gayriMevcutCount)}</td></tr></table>`;
                     html += `<br/><table border="1" style="border-collapse: collapse;"><tr><td colspan="6" ${hStyle}>GAYRI MEVCUT BEYANLARI</td></tr><tr><td ${hStyle}>SIRA NO</td><td ${hStyle}>AD SOYAD</td><td ${hStyle}>BİRİM</td><td ${hStyle}>TÜR</td><td ${hStyle}>TARİHLER</td><td ${hStyle}>GÜN SAYISI</td></tr>`;
                     beyanList.forEach((b, idx) => {
                         const fd = (s) => `${s.split('-')[2]}-${s.split('-')[1]}-${s.split('-')[0]}`;
-                        html += `<tr><td ${cStyle}>${idx + 1}</td><td ${nStyle}>${b.ad}</td><td ${cStyle}>${b.birim}</td><td ${rbStyle}>${b.tur}</td><td ${cStyle}>${fd(b.start)} / ${fd(b.end)}</td><td ${cStyle}>${fmt(b.gun)}</td></tr>`;
+                        const displayUnit = b.birim.toLocaleUpperCase('tr-TR').includes('UÇAK') ? 'TEKNİK EKİP' : b.birim;
+                        html += `<tr><td ${seqStyle}>${Math.floor(idx + 1)}</td><td ${nStyle}>${b.ad}</td><td ${cStyle}>${displayUnit}</td><td ${rbStyle}>${b.tur}</td><td ${cStyle}>${fd(b.start)} / ${fd(b.end)}</td><td ${numStyle}>${fmt(b.gun)}</td></tr>`;
                     });
                     html += `</table><br/><table border="1" style="border-collapse: collapse; width: 450px;"><tr><td colspan="2" ${hStyle}>KISALTMALAR VE AÇIKLAMALARI</td></tr>`;
-                    const abbrs = [["X", "MESAİ / HAZIR"], ["HT", "HAFTA TATİLİ"], ["G.İ", "GÜNLÜK İZİN"], ["F.M.İ", "FAZLA MESAİ İZNİ"], ["Yİ", "YILLIK İZİN"], ["M.İ", "MAZERET İZNİ"], ["Y.G.İ", "YARIM GÜN İZİN"], ["RAPOR", "RAPOR"], ["HASTANE", "HASTANE"], ["KURS", "KURS"], ["İDARİ İZİN", "İDARİ İZİN"]];
+                    const abbrs = [["X", "MESAİ / HAZIR"], ["HT", "HAFTA TATİLİ"], ["PLANLI", "PLANLI GÖREV"], ["PLANSIZ", "PLANSIZ GÖREV"], ["G.İ", "GÜNLÜK İZİN"], ["F.M.İ", "FAZLA MESAİ İZNİ"], ["Yİ", "YILLIK İZİN"], ["M.İ", "MAZERET İZNİ"], ["Y.G.İ", "YARIM GÜN İZİN"], ["RAPOR", "RAPOR"], ["HASTANE", "HASTANE"], ["KURS", "KURS"], ["İDARİ İZİN", "İDARİ İZİN"]];
                     abbrs.forEach(a => html += `<tr><td ${cStyle}>${a[0]}</td><td ${nStyle} style="padding-left:10px;">${a[1]}</td></tr>`);
                     html += '</table></body></html>';
                     const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob(['\uFEFF', html], { type: 'application/vnd.ms-excel;charset=utf-8' }));
@@ -1729,19 +1754,19 @@
                 if (isWeeklyMode) {
                     const dInR = getDaysInRange(rangeStartDate, rangeEndDate);
                     const rInR = dInR.map(d => { const dStr = normalizeDate(d); return allRecs.find(r => r.personId === p.id && r.date === dStr); }).filter(r => !!r);
-                    if (rInR.length > 0) { if (rInR.length < dInR.length) shouldBlur = true; else { const fR = rInR[0]; if (!rInR.every(r => r.status === fR.status && r.dutyType === fR.dutyType && r.dutyLocation === fR.dutyLocation && r.leaveType === fR.leaveType)) shouldBlur = true; } }
+                    if (rInR.length > 0) { if (rInR.length < dInR.length) shouldBlur = true; else { const fR = rInR[0]; if (!rInR.every(r => r.status === fR.status && (r.dutyType || DutyType.PLANNED) === (fR.dutyType || DutyType.PLANNED) && r.dutyLocation === fR.dutyLocation && r.leaveType === fR.leaveType)) shouldBlur = true; } }
                 }
                 return (
                     <div key={p.id} className="relative group">
                         <div className={`bg-forest-950/40 p-3 rounded border border-forest-800 flex flex-col xl:flex-row gap-4 items-start xl:items-center justify-between transition-all duration-300 ${shouldBlur ? 'opacity-30 blur-[2px] pointer-events-none' : ''}`}>
                             <div className="w-full xl:w-1/4 flex gap-2 items-center">
-                                {rangeStartDate !== rangeEndDate && <button onClick={() => openDetailModalWithAuth(p)} className="bg-blue-600 p-1.5 rounded"><CalendarDays size={18} /></button>}
-                                <span className="text-forest-500 w-6">{i + 1}</span>
+                                {rangeStartDate !== rangeEndDate && <button onClick={() => openDetailModalWithAuth(p)} className="bg-blue-600 p-1.5 rounded shadow-sm hover:bg-blue-500"><CalendarDays size={18} /></button>}
+                                <span className="text-forest-500 w-6 text-center">{i + 1}</span>
                                 <div><div className="text-white font-medium">{p.fullName}</div><div className="text-xs text-forest-400">{p.title || p.role}</div></div>
                             </div>
                             <AttendanceControl personId={p.id} state={s} isWeeklyMode={isWeeklyMode} aircraftModel={selModel} onChangeStatus={handleStatusChangeWithAuth} onChangeDetail={handleDetailChangeWithAuth} />
                         </div>
-                        {shouldBlur && <div className="absolute inset-0 flex items-center justify-center"><Button onClick={() => openDetailModalWithAuth(p)}><Edit2 size={16} className="mr-2" /> Düzenle</Button></div>}
+                        {shouldBlur && <div className="absolute inset-0 flex items-center justify-center"><Button onClick={() => openDetailModalWithAuth(p)}><Edit2 size={16} className="mr-2" /> Ayrıntıyı Gör ve Düzenle</Button></div>}
                     </div>
                 );
             };
@@ -1848,14 +1873,6 @@
             );
         };
 
-        const handleStatusChangeWithAuth = (pid, status) => {
-            // Placeholder: Needs to be implemented in AttendanceView or passed down
-        };
-
-        const handleDetailChangeWithAuth = (pid, field, value) => {
-             // Placeholder: Needs to be implemented in AttendanceView or passed down
-        };
-
         const Login = ({ onLogin }) => {
             const [u, setU] = useState(''); const [p, setP] = useState('');
             const handleSubmit = (e) => { e.preventDefault(); if (u === 'ogm' && p === '1839') onLogin(); };
@@ -1888,4 +1905,3 @@
     </script>
 </body>
 </html>
-
