@@ -64,7 +64,8 @@
     "react-dom": "https://esm.sh/react-dom@18.2.0",
     "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
     "lucide-react": "https://esm.sh/lucide-react@0.292.0?external=react,react-dom",
-    "xlsx": "https://esm.sh/xlsx@0.18.5"
+    "xlsx": "https://esm.sh/xlsx@0.18.5",
+    "exceljs": "https://esm.sh/exceljs@4.4.0/dist/exceljs.min.js"
   }
 }
 </script>
@@ -76,6 +77,7 @@
         import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
         import { createRoot } from 'react-dom/client';
         import * as LucideIcons from 'lucide-react';
+        import ExcelJS from 'exceljs';
 
         // 1️⃣ Akıllı Önbellek (Caching) Sistemi Global Tanımı
         window.photoCache = window.photoCache || {};
@@ -342,9 +344,6 @@
                         formattedPL.sort((a, b) => (a.rank || 999) - (b.rank || 999));
                         localData.savePersonnel(formattedPL);
                         memoryCache.personnel = formattedPL;
-                        
-                        // 1️⃣ Açılış Performansı: Arka planda fotoğraf yükleme İPTAL edildi. Metin bazlı hızlı açılış.
-                        // storageService.initBackgroundCaching(formattedPL); 
                     }
 
                     const att = await apiCall('get_attendance');
@@ -402,12 +401,10 @@
                 return updatedFullList;
             },
             fetchSafeImage: async (fileId) => {
-                // Akıllı Önbellek Sistemi Uygulaması - Backend artık prefix'i kendi ekleyerek gönderiyor.
                 if (window.photoCache[fileId]) return window.photoCache[fileId];
                 try {
                     const res = await apiCall('get_safe_image', { fileId });
                     if (res) {
-                        // Backend'den gelen veri zaten "data:image/jpeg;base64,..." formatındadır.
                         window.photoCache[fileId] = res;
                         return res;
                     }
@@ -416,7 +413,6 @@
                     return null;
                 }
             },
-            // Arka Plan Sessiz Yükleme: AÇILIŞTA İPTAL EDİLDİ.
             initBackgroundCaching: async (personnelList) => {
                 return; 
             }
@@ -464,7 +460,7 @@
             Trash2, XCircle, ArrowUp, ArrowDown, UserMinus, MapPin, Search, 
             AlertCircle, Users, Globe, Calendar, MessageSquare, CheckCircle, 
             BarChart3, Activity, FileText, Loader2, Plus, Edit2, MoreVertical, 
-            CalendarDays, Lock, BookOpen, Camera, Upload, Image: ImageIcon, User
+            CalendarDays, Lock, BookOpen, Camera, Upload, Image: ImageIcon, User, Save
         } = LucideIcons;
 
         const ModelIcon = ({ category, model, className }) => {
@@ -657,6 +653,7 @@
 
             // 1️⃣ & 3️⃣ Excel/Sheet'ten Kopyala-Yapıştır & Sürükle-Bırak State'i
             const [tempPhotoData, setTempPhotoData] = useState(null);
+            const imgRef = useRef(null);
 
             useEffect(() => {
                 setLoading(true);
@@ -687,12 +684,14 @@
                     const updatedUrl = action === 'delete_photo' ? '' : fixDriveUrl(result.url);
                     
                     // 3️⃣ Önbelleği senkronize et
-                    const fileIdMatch = updatedUrl.match(/[-\w]{25,}/);
-                    if (action === 'upload_photo' && fileIdMatch && finalFileData) {
-                        window.photoCache[fileIdMatch[0]] = finalFileData;
+                    if (action === 'upload_photo' && finalFileData) {
+                        window.photoCache[photoPerson.id] = finalFileData;
                     }
-                    const oldMatch = photoPerson.photoUrl.match(/[-\w]{25,}/);
-                    if (oldMatch && action === 'delete_photo') delete window.photoCache[oldMatch[0]];
+                    if (action === 'delete_photo') {
+                        delete window.photoCache[photoPerson.id];
+                        const oldMatch = photoPerson.photoUrl.match(/[-\w]{25,}/);
+                        if (oldMatch) delete window.photoCache[oldMatch[0]];
+                    }
 
                     // Update state without refresh
                     const updatedList = plList.map(p => p.id === photoPerson.id ? { ...p, photoUrl: updatedUrl } : p);
@@ -707,6 +706,71 @@
                 } finally {
                     setLoading(false);
                 }
+            };
+
+            const handleUpdateDriveWithCrop = async () => {
+                if (!photoPerson) return;
+                
+                // Get the current visible image source
+                let sourceB64 = tempPhotoData;
+                if (!sourceB64 && photoPerson.photoUrl) {
+                    const fIdMatch = photoPerson.photoUrl.match(/[-\w]{25,}/);
+                    if (fIdMatch) {
+                        sourceB64 = window.photoCache[fIdMatch[0]] || await storageService.fetchSafeImage(fIdMatch[0]);
+                    }
+                }
+                
+                if (!sourceB64) return;
+
+                // Create offscreen canvas to capture current "cropped" view (WYSIWYG)
+                const img = new Image();
+                img.onload = async () => {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = 400;
+                    canvas.height = 400;
+                    const ctx = canvas.getContext('2d');
+                    
+                    // Mimic the container style (forest-950 bg)
+                    ctx.fillStyle = '#0b2918';
+                    ctx.fillRect(0, 0, 400, 400);
+
+                    // Calculation for zoom/crop capture
+                    const s = Math.min(img.width, img.height) / zoomLevel;
+                    const dx = (img.width - s) / 2;
+                    const dy = (img.height - s) / 2;
+                    
+                    ctx.drawImage(img, dx, dy, s, s, 0, 0, 400, 400);
+                    const croppedB64 = canvas.toDataURL('image/jpeg', 0.9);
+                    
+                    // 1️⃣ KALICI GERÇEKLİK: RAM'deki önbelleği anında güncelle
+                    window.photoCache[photoPerson.id] = croppedB64;
+                    
+                    // 2️⃣ DRIVE GÜNCELLE: Backend'e gönder
+                    setLoading(true);
+                    try {
+                        const payload = { 
+                          personId: photoPerson.id,
+                          fileName: `${photoPerson.id}.jpg`,
+                          base64: croppedB64.split(',')[1]
+                        };
+                        const result = await apiCall('upload_photo', payload);
+                        const updatedUrl = fixDriveUrl(result.url);
+                        
+                        const updatedList = plList.map(p => p.id === photoPerson.id ? { ...p, photoUrl: updatedUrl } : p);
+                        setPlList(updatedList);
+                        localStorage.setItem('ogm_personnel', JSON.stringify(updatedList));
+                        
+                        setPhotoPerson({ ...photoPerson, photoUrl: updatedUrl });
+                        setTempPhotoData(null);
+                        setZoomLevel(1);
+                        showNotify("Drive güncellendi ve yeni görünüm kalıcı hale getirildi.");
+                    } catch (e) {
+                        alert("Hata: " + e.message);
+                    } finally {
+                        setLoading(false);
+                    }
+                };
+                img.src = sourceB64;
             };
 
             const processImageFile = (file) => {
@@ -873,75 +937,98 @@
                 link.click();
             };
 
-            // 2️⃣ & 3️⃣ Resimli Excel Raporu (In-Memory Export): Base64 Gömme ve Kurumsal Tasarımlı
+            // 3️⃣ & 4️⃣ Resimli Excel Raporu (Gördüğünü Al WYSIWYG Flow)
             const exportPersonnelExcel = async () => {
                 const activePersonnel = plList.filter(p => !p.activeUntil);
                 if (activePersonnel.length === 0) return;
 
-                setExportProgress(0); // Progress Modalını Başlat
+                setExportProgress(1); // 4️⃣ Progress Start
                 
-                let tableRows = '';
-                let preparedCount = 0;
+                const workbook = new ExcelJS.Workbook();
+                const worksheet = workbook.addWorksheet('Personel Listesi');
+                
+                // 5️⃣ & 6️⃣ Excel Tablo Stili ve Başlık Satırı
+                worksheet.columns = [
+                    { header: 'SIRA NO', key: 'sira', width: 10 },
+                    { header: 'AD SOYADI', key: 'ad', width: 35 },
+                    { header: 'BİRİMİ', key: 'birim', width: 25 },
+                    { header: 'FOTOĞRAF', key: 'foto', width: 15 }
+                ];
 
-                for (const p of activePersonnel) {
-                    const fileIdMatch = p.photoUrl ? p.photoUrl.match(/[-\w]{25,}/) : null;
-                    const fileId = fileIdMatch ? fileIdMatch[0] : null;
+                worksheet.getRow(1).font = { color: { argb: 'FFFFFFFF' }, bold: true };
+                worksheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF228B22' } };
+                worksheet.getRow(1).alignment = { vertical: 'middle', horizontal: 'center' };
+
+                let preparedCount = 0;
+                const offscreenCanvas = document.createElement('canvas');
+                offscreenCanvas.width = 60;
+                offscreenCanvas.height = 60;
+                const ctx = offscreenCanvas.getContext('2d');
+
+                for (let i = 0; i < activePersonnel.length; i++) {
+                    const p = activePersonnel[i];
+                    const rowIndex = i + 2;
+                    worksheet.getRow(rowIndex).height = 55;
+                    worksheet.getCell(`A${rowIndex}`).value = i + 1;
+                    worksheet.getCell(`B${rowIndex}`).value = p.fullName;
+                    worksheet.getCell(`C${rowIndex}`).value = p.unit || p.title || p.role;
                     
-                    let embeddedB64 = '';
-                    if (fileId) {
-                        // Backend Sıkıştırma: Görseli backend üzerinden thumbnail olarak çeker.
-                        // Backend artık prefix'i kendi eklediği için doğrudan kullanıyoruz.
-                        let rawData = await storageService.fetchSafeImage(fileId);
-                        if (rawData) {
-                            embeddedB64 = rawData;
-                        }
+                    // GÖRSEL KAYNAK: Kalıcı gerçeklik olan RAM önbelleğini esas al (WYSIWYG)
+                    let sourceB64 = window.photoCache[p.id];
+                    if (!sourceB64 && p.photoUrl) {
+                        const fIdMatch = p.photoUrl.match(/[-\w]{25,}/);
+                        if (fIdMatch) sourceB64 = await storageService.fetchSafeImage(fIdMatch[0]);
                     }
 
-                    tableRows += `
-                    <tr style="height: 65px;">
-                        <td style="text-align: center; border: 1px solid #000000;">${preparedCount + 1}</td>
-                        <td style="text-align: left; padding-left: 10px; border: 1px solid #000000;">${p.fullName}</td>
-                        <td style="text-align: left; padding-left: 10px; border: 1px solid #000000;">${p.unit || p.title || p.role}</td>
-                        <td style="width: 60px; height: 60px; text-align: center; vertical-align: middle; border: 1px solid #000000;">
-                            ${embeddedB64 ? `<img src="${embeddedB64}" width="60" height="60" style="display: block; margin: auto; object-fit: cover;">` : 'Yok'}
-                        </td>
-                    </tr>`;
+                    if (sourceB64) {
+                        try {
+                            const imgB64 = await new Promise((resolve) => {
+                                const img = new Image();
+                                img.onload = () => {
+                                    ctx.fillStyle = '#0b2918'; 
+                                    ctx.fillRect(0, 0, 60, 60);
+                                    const s = Math.min(img.width, img.height);
+                                    ctx.drawImage(img, (img.width - s) / 2, (img.height - s) / 2, s, s, 0, 0, 60, 60);
+                                    resolve(offscreenCanvas.toDataURL('image/jpeg', 0.8));
+                                };
+                                img.onerror = () => resolve(null);
+                                img.src = sourceB64;
+                            });
+
+                            if (imgB64) {
+                                const imageId = workbook.addImage({
+                                    base64: imgB64,
+                                    extension: 'jpeg',
+                                });
+                                worksheet.addImage(imageId, {
+                                    tl: { col: 3.1, row: i + 1.1 },
+                                    ext: { width: 60, height: 60 }
+                                });
+                            }
+                        } catch(e) { console.error("Image error", e); }
+                    }
 
                     preparedCount++;
-                    // Yüzdelik İlerleme Çubuğu Güncelleme
                     setExportProgress((preparedCount / activePersonnel.length) * 100);
+                    if (preparedCount % 5 === 0) await new Promise(r => setTimeout(r, 10));
                 }
-                
-                // Kurumsal Tasarım: Yeşil Başlık Satırı (#228b22) / Beyaz Yazı
-                let html = `
-                <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
-                <head><meta charset="utf-8">
-                <style>
-                    table { border-collapse: collapse; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
-                    th { background-color: #228b22; color: #ffffff; font-weight: bold; border: 1px solid #000000; height: 35px; text-align: center; }
-                    td { border: 1px solid #000000; vertical-align: middle; mso-number-format:"\\@"; }
-                </style>
-                </head>
-                <body>
-                    <table>
-                        <tr>
-                            <th>SIRA NO</th>
-                            <th>AD SOYADI</th>
-                            <th>BİRİMİ</th>
-                            <th style="width: 80px;">FOTOĞRAF</th>
-                        </tr>
-                        ${tableRows}
-                    </table>
-                </body>
-                </html>`;
 
-                const blob = new Blob(['\uFEFF', html], { type: 'application/vnd.ms-excel;charset=utf-8' });
-                const link = document.createElement('a');
-                link.href = URL.createObjectURL(blob);
-                link.download = `Resimli_Personel_Listesi_${new Date().toLocaleDateString('tr-TR')}.xls`;
-                link.click();
-                
-                setTimeout(() => setExportProgress(null), 800); // Progress Modalını Kapat
+                worksheet.eachRow((row) => {
+                    row.eachCell((cell) => {
+                        cell.border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
+                        cell.alignment = { vertical: 'middle', horizontal: 'center' };
+                    });
+                });
+
+                if (preparedCount === activePersonnel.length) {
+                    const buffer = await workbook.xlsx.writeBuffer();
+                    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+                    const link = document.createElement('a');
+                    link.href = URL.createObjectURL(blob);
+                    link.download = `Resimli_Personel_Listesi_${new Date().toLocaleDateString('tr-TR')}.xlsx`;
+                    link.click();
+                    setTimeout(() => setExportProgress(null), 800);
+                }
             };
 
             if (loading) return (
@@ -955,16 +1042,16 @@
 
             return (
                 <div className="container mx-auto p-4 max-w-6xl relative">
-                    {/* 2️⃣ Progress Bar Modal Paneli */}
+                    {/* 4️⃣ Progress Bar Modal (Zorunlu) */}
                     {exportProgress !== null && (
                         <div className="fixed inset-0 bg-black/70 z-[200] flex items-center justify-center p-4 backdrop-blur-sm">
                             <div className="bg-forest-900 border border-forest-500 p-8 rounded-2xl max-w-sm w-full shadow-2xl text-center animate-slide-down">
-                                <div className="text-white font-bold mb-4 text-lg tracking-wide uppercase tracking-tighter">Excel Dosyası Hazırlanıyor</div>
+                                <div className="text-white font-bold mb-4 text-lg uppercase tracking-widest">Rapor Hazırlanıyor</div>
                                 <div className="w-full bg-forest-950 rounded-full h-6 mb-3 border border-forest-700 overflow-hidden p-1 shadow-inner">
                                     <div className="bg-gradient-to-r from-green-600 via-green-400 to-green-500 h-full rounded-full transition-all duration-300" style={{ width: `${exportProgress}%` }}></div>
                                 </div>
                                 <div className="text-green-400 text-sm font-bold font-mono">%{Math.round(exportProgress)} Tamamlandı</div>
-                                <p className="text-forest-400 text-[11px] mt-4 leading-tight">Görseller Drive'dan talep üzerine çekiliyor, backend tarafında optimize ediliyor ve Excel dosyasına doğrudan gömülüyor.</p>
+                                <p className="text-forest-400 text-[11px] mt-4 leading-tight">Fotoğraflar frontend RAM önbellekten yakalanarak Excel dosyasına embedded image olarak gömülüyor.</p>
                             </div>
                         </div>
                     )}
@@ -977,7 +1064,7 @@
                     <div className="flex justify-between mb-6">
                         <h2 className="text-2xl font-bold">Yönetici Paneli</h2>
                         <div className="flex gap-2">
-                             {/* Talep Üzerine (On-Demand) Resimli Excel Butonu */}
+                             {/* WEB GÖRÜNÜMÜ BİREBİR Excel Butonu */}
                              <button onClick={exportPersonnelExcel} className="btn-excel flex items-center gap-2 px-4 py-2 text-sm rounded-md font-bold shadow-md transition-all">
                                 <FileText size={16} /> Personel Listesi Excel (Resimli)
                              </button>
@@ -995,7 +1082,7 @@
                         <div className="grid lg:grid-cols-3 gap-6">
                             <Card title={acForm.id ? "Düzenle" : "Ekle"} className="h-fit">
                                 <div className="space-y-3">
-                                    <input placeholder="Model (Örn: BELL-429)" className="w-full bg-forest-950 border border-forest-700 rounded p-2 text-white" value={acForm.model} onChange={e => setAcForm({ ...acForm, model: e.target.value })} />
+                                    <input placeholder="Ad (Örn: BELL-429)" className="w-full bg-forest-950 border border-forest-700 rounded p-2 text-white" value={acForm.model} onChange={e => setAcForm({ ...acForm, model: e.target.value })} />
                                     <div className="flex gap-1">
                                         <button onClick={() => setAcForm({ ...acForm, cat: AircraftCategory.HELICOPTER })} className={`flex-1 py-1 text-xs border ${acForm.cat === AircraftCategory.HELICOPTER ? 'bg-forest-500' : 'bg-forest-800'}`}>Helikopter</button>
                                         <button onClick={() => setAcForm({ ...acForm, cat: AircraftCategory.PLANE })} className={`flex-1 py-1 text-xs border ${acForm.cat === AircraftCategory.PLANE ? 'bg-forest-500' : 'bg-forest-800'}`}>Uçak</button>
@@ -1039,12 +1126,9 @@
                                         onChange={e => {
                                             const val = e.target.value;
                                             let newRole = plForm.role;
-                                            
-                                            // Otomatik rol belirleme
                                             const valUpper = val.toLocaleUpperCase('tr-TR');
                                             if (valUpper.includes('PİLOT')) newRole = Role.PILOT;
                                             else if (valUpper.includes('TEKNİSYEN') || valUpper.includes('TEKNİKER') || valUpper.includes('MÜHENDİS')) newRole = Role.TECHNICIAN;
-
                                             if (val === 'OTHER') { 
                                                 setManualTitle(true); 
                                                 setPlForm({ ...plForm, title: '', role: newRole });
@@ -1058,14 +1142,11 @@
                                         {PERSONNEL_TITLES.map(t => <option key={t} value={t}>{t}</option>)}
                                         <option value="OTHER">Diğer</option>
                                     </select>
-                                    
                                     {manualTitle && <input placeholder="Unvan Giriniz" className="w-full bg-forest-950 border border-forest-700 rounded p-2 text-white" value={plForm.title} onChange={e => setPlForm({ ...plForm, title: e.target.value })} />}
-                                    
                                     <select className="w-full bg-forest-950 border border-forest-700 rounded p-2 text-white" value={plForm.unit || ''} onChange={e => setPlForm({ ...plForm, unit: e.target.value })}>
-                                        <option value="">Birim / Uçak Seçimi (Otomatik/Genel)</option>
+                                        <option value="">Birim / Uçak Seçimi</option>
                                         {uniqueModels.map(m => <option key={m} value={m}>{m}</option>)}
                                     </select>
-
                                     <select className="w-full bg-forest-950 border border-forest-700 rounded p-2 text-white" value={plForm.city} onChange={e => setPlForm({ ...plForm, city: e.target.value })}>{CITIES.map(c => <option key={c}>{c}</option>)}</select>
                                     <input type="date" className="w-full bg-forest-950 border border-forest-700 rounded p-2 text-white" value={plForm.start} onChange={e => setPlForm({ ...plForm, start: e.target.value })} />
                                     <div className="flex gap-2">
@@ -1087,7 +1168,7 @@
                                                     <td className="p-2">{i + 1}</td>
                                                     <td className="p-2 flex items-center gap-2">
                                                         {p.fullName} 
-                                                        {p.photoUrl && <ImageIcon size={14} className="text-forest-400" />}
+                                                        {(p.photoUrl || window.photoCache[p.id]) && <ImageIcon size={14} className="text-forest-400" />}
                                                     </td>
                                                     <td className="p-2 bg-forest-900/50"><span className="text-xs px-1 rounded bg-forest-800">{p.title || p.role}</span></td>
                                                     <td className="p-2">{p.unit || '-'}</td>
@@ -1109,7 +1190,6 @@
                         <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[100] p-4">
                             <Card title="Gelişmiş Fotoğraf Yönetimi" className="w-full max-w-md animate-slide-down">
                                 <div className="flex flex-col items-center gap-6">
-                                    {/* 1️⃣ & 3️⃣ Paste ve Drop Event Dinleyicileri */}
                                     <div 
                                         onPaste={handlePaste}
                                         onDragOver={(e) => e.preventDefault()}
@@ -1122,8 +1202,8 @@
                                                 className="w-full h-full object-cover transition-transform duration-200" 
                                                 style={{ transform: `scale(${zoomLevel})` }}
                                             />
-                                        ) : photoPerson.photoUrl ? (
-                                            <SafeImage src={photoPerson.photoUrl} className="w-full h-full object-cover transition-transform duration-200" style={{ transform: `scale(${zoomLevel})` }} />
+                                        ) : (photoPerson.photoUrl || window.photoCache[photoPerson.id]) ? (
+                                            <SafeImage src={photoPerson.photoUrl} personId={photoPerson.id} className="w-full h-full object-cover transition-transform duration-200" style={{ transform: `scale(${zoomLevel})` }} />
                                         ) : (
                                             <div className="text-center p-4">
                                                 <Upload size={32} className="mx-auto mb-2 text-forest-600" />
@@ -1142,13 +1222,13 @@
                                             <input type="range" min="1" max="3" step="0.1" value={zoomLevel} onChange={(e) => setZoomLevel(parseFloat(e.target.value))} className="w-full accent-forest-500 h-1.5 bg-forest-950 rounded-lg appearance-none cursor-pointer" />
                                         </div>
                                         <div className="grid grid-cols-1 gap-3">
-                                            {/* 3️⃣ Drive Kaydet/Güncelle Butonu */}
-                                            {tempPhotoData && (
+                                            {/* 2) DRIVE GÜNCELLE Butonu (Zoom veya yeni yükleme varsa) */}
+                                            {(zoomLevel > 1 || tempPhotoData) && (
                                                 <button 
-                                                    onClick={() => handlePhotoAction('upload_photo')}
+                                                    onClick={handleUpdateDriveWithCrop}
                                                     className="bg-green-600 hover:bg-green-500 text-white text-sm font-bold py-3 rounded flex items-center justify-center gap-2 transition-all shadow-xl animate-pulse"
                                                 >
-                                                    <LucideIcons.Save size={18} /> DRIVE KAYDET / GÜNCELLE
+                                                    <LucideIcons.Save size={18} /> DRIVE GÜNCELLE
                                                 </button>
                                             )}
                                             
@@ -1194,35 +1274,55 @@
             );
         };
 
-        // Improved SafeImage Component to handle Proxy Data and 2️⃣ Önbellekleme
-        const SafeImage = ({ src, className, style }) => {
+        // Improved SafeImage Component to handle Proxy Data and 1️⃣ & 2️⃣ Önbellekleme
+        const SafeImage = ({ src, personId, className, style }) => {
             const [data, setData] = useState(null);
             const [error, setError] = useState(false);
             const [loading, setLoading] = useState(true);
 
             useEffect(() => {
+                // 1) Kalıcı Gerçeklik: Öncelikle Personel ID tabanlı önbelleğe (RAM) bak
+                if (personId && window.photoCache[personId]) {
+                    setData(window.photoCache[personId]);
+                    setLoading(false);
+                    return;
+                }
+
                 if (!src) { setLoading(false); return; }
+
+                // data: formatıysa (anlık düzenleme vb.) doğrudan kullan ve cache'le
+                if (src.startsWith('data:')) {
+                    setData(src);
+                    if (personId) window.photoCache[personId] = src;
+                    setLoading(false);
+                    return;
+                }
+
                 const fileIdMatch = src.match(/[-\w]{25,}/);
                 if (!fileIdMatch) { setLoading(false); setError(true); return; }
                 
                 const fileId = fileIdMatch[0];
                 
-                // Önbellek kontrolü
+                // fileId tabanlı cache kontrolü
                 if (window.photoCache[fileId]) {
-                    setData(window.photoCache[fileId]);
+                    const cached = window.photoCache[fileId];
+                    setData(cached);
+                    if (personId) window.photoCache[personId] = cached;
                     setLoading(false);
                     return;
                 }
 
+                // Backend'den çek
                 storageService.fetchSafeImage(fileId).then(res => {
                     if (res) {
                         setData(res);
+                        if (personId) window.photoCache[personId] = res;
                     } else {
                         setError(true);
                     }
                     setLoading(false);
                 });
-            }, [src]);
+            }, [src, personId]);
 
             if (loading) return <div className={`flex items-center justify-center bg-forest-950 ${className}`}><Loader2 className="animate-spin text-forest-600" size={16} /></div>;
             if (error || !data) return <div className={`flex items-center justify-center bg-forest-950 ${className}`}><User className="text-forest-700" size={16} /></div>;
@@ -1909,6 +2009,8 @@
                     setLoading(false);
                 }
             };
+            
+            // 7️⃣ CRITICAL FIX: ABSENTEE STATEMENT SPLIT LOGIC
             const exportExcel = async (isDaily = false) => {
                 setLoading(true);
                 try {
@@ -1951,27 +2053,74 @@
                         while(current <= end) { days.push(new Date(current)); current.setDate(current.getDate() + 1); } 
                     }
                     const uniqueAbsentIds = new Set();
-                    const beyanList = []; const addedPeriods = new Set();
+                    const beyanList = []; 
+                    
+                    // 7️⃣ FIXED GROUPING LOGIC - ABSENCE BY TYPE PER PERIOD
                     targetP.forEach(p => {
-                        days.forEach(d => {
-                            const dStr = normalizeDate(d), r = freshRecs.find(x => x.personId === p.id && x.date === dStr);
-                            const absenceStates = [AttendanceStatus.LEAVE, AttendanceStatus.SICK, AttendanceStatus.HOSPITAL, AttendanceStatus.PUBLIC_HOLIDAY, AttendanceStatus.OTHER, AttendanceStatus.ABSENT];
-                            if (r && absenceStates.includes(r.status)) {
-                                uniqueAbsentIds.add(p.id);
-                                const pRecs = freshRecs.filter(x => x.personId === p.id).sort((a,b) => a.date.localeCompare(b.date));
-                                let curIdx = pRecs.findIndex(x => x.date === dStr);
-                                let sI = curIdx; while(sI > 0 && absenceStates.includes(pRecs[sI-1].status)) sI--;
-                                let eI = curIdx; while(eI < pRecs.length - 1 && absenceStates.includes(pRecs[eI+1].status)) eI++;
-                                const rStart = pRecs[sI].date, rEnd = pRecs[eI].date, key = `${p.id}-${rStart}-${rEnd}`;
-                                if (!addedPeriods.has(key)) {
-                                    addedPeriods.add(key); let totalG = 0; let hasR = false;
-                                    for(let k = sI; k <= eI; k++) { totalG += (pRecs[k].leaveType === LeaveType.HALF_DAY || pRecs[k].leaveType === LeaveType.HALF_OVERTIME ? 0.5 : 1); if(pRecs[k].status === AttendanceStatus.SICK || pRecs[k].status === AttendanceStatus.HOSPITAL) hasR = true; }
-                                    let turL = r.status === AttendanceStatus.LEAVE ? r.leaveType : r.status; if(hasR) turL = pRecs.slice(sI, eI+1).find(x => x.status === AttendanceStatus.SICK || x.status === AttendanceStatus.HOSPITAL).status === AttendanceStatus.SICK ? 'RAPOR' : 'HASTANE';
-                                    beyanList.push({ ad: p.fullName, birim: fUK(p), tur: turL, start: rStart, end: rEnd, gun: totalG });
+                        const pRecs = freshRecs.filter(x => x.personId === p.id).sort((a,b) => a.date.localeCompare(b.date));
+                        const absenceStates = [AttendanceStatus.LEAVE, AttendanceStatus.SICK, AttendanceStatus.HOSPITAL, AttendanceStatus.PUBLIC_HOLIDAY, AttendanceStatus.OTHER, AttendanceStatus.ABSENT];
+                        
+                        let i = 0;
+                        while (i < pRecs.length) {
+                            const r = pRecs[i];
+                            if (absenceStates.includes(r.status)) {
+                                let sI = i;
+                                let currentType = r.status === AttendanceStatus.LEAVE ? r.leaveType : r.status;
+                                if (currentType === AttendanceStatus.SICK) currentType = 'RAPOR';
+                                if (currentType === AttendanceStatus.HOSPITAL) currentType = 'HASTANE';
+                                if (currentType === AttendanceStatus.PUBLIC_HOLIDAY) currentType = 'İDARİ İZİN';
+
+                                // Group continuous days of same person AND same leave type
+                                while (i + 1 < pRecs.length) {
+                                    const nextR = pRecs[i + 1];
+                                    let nextType = nextR.status === AttendanceStatus.LEAVE ? nextR.leaveType : nextR.status;
+                                    if (nextType === AttendanceStatus.SICK) nextType = 'RAPOR';
+                                    if (nextType === AttendanceStatus.HOSPITAL) nextType = 'HASTANE';
+                                    if (nextType === AttendanceStatus.PUBLIC_HOLIDAY) nextType = 'İDARİ İZİN';
+
+                                    if (absenceStates.includes(nextR.status) && nextType === currentType) {
+                                        i++;
+                                    } else {
+                                        break;
+                                    }
+                                }
+                                
+                                let eI = i;
+                                const rStart = pRecs[sI].date;
+                                const rEnd = pRecs[eI].date;
+                                
+                                // Check if this leave period overlaps with our report's current range
+                                const overlapsReport = days.some(d => {
+                                    const dStr = normalizeDate(d);
+                                    return dStr >= rStart && dStr <= rEnd;
+                                });
+
+                                if (overlapsReport) {
+                                    uniqueAbsentIds.add(p.id);
+                                    let totalG = 0;
+                                    for (let k = sI; k <= eI; k++) {
+                                        const dStr = pRecs[k].date;
+                                        // Only count days that are within the report's current range
+                                        if (days.some(d => normalizeDate(d) === dStr)) {
+                                            totalG += (pRecs[k].leaveType === LeaveType.HALF_DAY || pRecs[k].leaveType === LeaveType.HALF_OVERTIME ? 0.5 : 1);
+                                        }
+                                    }
+                                    if (totalG > 0) {
+                                        beyanList.push({
+                                            ad: p.fullName,
+                                            birim: fUK(p),
+                                            tur: currentType,
+                                            start: rStart,
+                                            end: rEnd,
+                                            gun: totalG
+                                        });
+                                    }
                                 }
                             }
-                        });
+                            i++;
+                        }
                     });
+
                     const totalFixed = targetP.length, gayriMevcutCount = uniqueAbsentIds.size, hazirCount = totalFixed - gayriMevcutCount;
                     const allPossibleCols = [
                         { key: 'w', label: 'X' }, { key: 'ht', label: 'HT' }, 
@@ -2002,7 +2151,14 @@
                         return { id: p.id, s };
                     });
                     const activeCols = allPossibleCols.filter(c => stats.some(st => st.s[c.key] > 0));
-                    const fmt = (n) => (n === 0 || n === '0') ? '' : (typeof n === 'number' ? n : parseFloat(String(n).replace(',', '.')));
+                    
+                    // 8️⃣ NUMERICAL CELL FORMATTING
+                    const fmt = (n) => {
+                        if (n === 0 || n === '0') return '';
+                        const val = parseFloat(String(n).replace(',', '.'));
+                        return isNaN(val) ? '' : val;
+                    };
+                    
                     const hStyle = 'style="background-color: #c6e0b4; font-weight: bold; text-align: center; border: 1px solid #000;"', 
                           cStyle = 'style="border: 1px solid #000; text-align: center; mso-number-format:\'@\';"', 
                           nStyle = 'style="border: 1px solid #000; text-align: left;"', 
@@ -2026,7 +2182,7 @@
                             lastUnit = pUnit;
                         }
                         const s = stats.find(st => st.id === p.id).s;
-                        html += `<tr><td ${seqStyle}>${Math.floor(i + 1)}</td><td colspan="2" ${nStyle}>${p.fullName}</td>`;
+                        html += `<tr><td ${seqStyle}>${Number(i + 1)}</td><td colspan="2" ${nStyle}>${p.fullName}</td>`;
                         days.forEach(d => {
                             const dStr = normalizeDate(d), r = freshRecs.find(x => x.personId === p.id && x.date === dStr), isWe = d.getDay() === 0 || d.getDay() === 6;
                             let ct = isWe ? 'HT' : 'X';
@@ -2039,14 +2195,16 @@
                         });
                         activeCols.forEach(col => html += `<td ${numStyle}>${fmt(s[col.key])}</td>`);
                         let totalActive = 0; days.forEach(d => { if (!(p.activeUntil && normalizeDate(d) > p.activeUntil) && !(p.activeFrom && normalizeDate(d) < p.activeFrom)) totalActive++; });
-                        html += `<td ${seqStyle}>${Math.floor(totalActive)}</td></tr>`;
+                        html += `<td ${seqStyle}>${Number(totalActive)}</td></tr>`;
                     });
-                    html += `</table><br/><table border="1" style="border-collapse: collapse; width: 350px;"><tr><td colspan="2" ${hStyle}>GENEL ÖZET</td></tr><tr><td ${nStyle}>TOPLAM PERSONEL</td><td ${seqStyle}>${Math.floor(totalFixed)}</td></tr><tr><td ${nStyle}>HAZIR</td><td ${seqStyle}>${Math.floor(hazirCount)}</td></tr><tr><td ${nStyle}>GAYRI MEVCUT</td><td ${seqStyle}>${Math.floor(gayriMevcutCount)}</td></tr></table>`;
+                    html += `</table><br/><table border="1" style="border-collapse: collapse; width: 350px;"><tr><td colspan="2" ${hStyle}>GENEL ÖZET</td></tr><tr><td ${nStyle}>TOPLAM PERSONEL</td><td ${seqStyle}>${Number(totalFixed)}</td></tr><tr><td ${nStyle}>HAZIR</td><td ${seqStyle}>${Number(hazirCount)}</td></tr><tr><td ${nStyle}>GAYRI MEVCUT</td><td ${seqStyle}>${Number(gayriMevcutCount)}</td></tr></table>`;
+                    
+                    // 7️⃣ GAYRI MEVCUT BEYANLARI - SEPARATED BY TYPE FOR FATİH ÇAMUR & ALL
                     html += `<br/><table border="1" style="border-collapse: collapse;"><tr><td colspan="6" ${hStyle}>GAYRI MEVCUT BEYANLARI</td></tr><tr><td ${hStyle}>SIRA NO</td><td ${hStyle}>AD SOYAD</td><td ${hStyle}>BİRİM</td><td ${hStyle}>TÜR</td><td ${hStyle}>TARİHLER</td><td ${hStyle}>GÜN SAYISI</td></tr>`;
                     beyanList.forEach((b, idx) => {
                         const fd = (s) => `${s.split('-')[2]}-${s.split('-')[1]}-${s.split('-')[0]}`;
                         const displayUnit = b.birim.toLocaleUpperCase('tr-TR').includes('UÇAK') ? 'TEKNİK EKİP' : b.birim;
-                        html += `<tr><td ${seqStyle}>${Math.floor(idx + 1)}</td><td ${nStyle}>${b.ad}</td><td ${cStyle}>${displayUnit}</td><td ${rbStyle}>${b.tur}</td><td ${cStyle}>${fd(b.start)} / ${fd(b.end)}</td><td ${numStyle}>${fmt(b.gun)}</td></tr>`;
+                        html += `<tr><td ${seqStyle}>${Number(idx + 1)}</td><td ${nStyle}>${b.ad}</td><td ${cStyle}>${displayUnit}</td><td ${rbStyle}>${b.tur}</td><td ${cStyle}>${fd(b.start)} / ${fd(b.end)}</td><td ${numStyle}>${fmt(b.gun)}</td></tr>`;
                     });
                     html += `</table><br/><table border="1" style="border-collapse: collapse; width: 450px;"><tr><td colspan="2" ${hStyle}>KISALTMALAR VE AÇIKLAMALARI</td></tr>`;
                     const abbrs = [["X", "MESAİ / HAZIR"], ["HT", "HAFTA TATİLİ"], ["PLANLI", "PLANLI GÖREV"], ["PLANSIZ", "PLANSIZ GÖREV"], ["G.İ", "GÜNLÜK İZİN"], ["F.M.İ", "FAZLA MESAİ İZNİ"], ["Yİ", "YILLIK İZİN"], ["M.İ", "MAZERET İZNİ"], ["Y.G.İ", "YARIM GÜN İZİN"], ["RAPOR", "RAPOR"], ["HASTANE", "HASTANE"], ["KURS", "KURS"], ["İDARİ İZİN", "İDARİ İZİN"]];
@@ -2075,8 +2233,8 @@
                                 <div 
                                     className="cursor-help relative group/name flex items-center gap-3"
                                     onMouseEnter={(e) => {
-                                        if (p.photoUrl) {
-                                            setHoverPhoto(p.photoUrl);
+                                        if (p.photoUrl || window.photoCache[p.id]) {
+                                            setHoverPhoto({ url: p.photoUrl, personId: p.id });
                                             setMousePos({ x: e.clientX, y: e.clientY });
                                         }
                                     }}
@@ -2086,7 +2244,7 @@
                                     onMouseLeave={() => setHoverPhoto(null)}
                                 >
                                     <div className="w-10 h-10 rounded border border-forest-700 overflow-hidden flex-shrink-0 bg-forest-900">
-                                        <SafeImage src={p.photoUrl} className="personnel-photo-square" />
+                                        <SafeImage src={p.photoUrl} personId={p.id} className="personnel-photo-square" />
                                     </div>
                                     <div>
                                         <div className="text-white font-medium">{p.fullName}</div>
@@ -2210,7 +2368,7 @@
                                 height: '180px'
                             }}
                         >
-                            <SafeImage src={hoverPhoto} className="personnel-photo-square rounded-md" />
+                            <SafeImage src={hoverPhoto.url} personId={hoverPhoto.personId} className="personnel-photo-square rounded-md" />
                         </div>
                     )}
                 </div>
