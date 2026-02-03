@@ -537,7 +537,7 @@
                         <div className="w-full flex flex-col gap-2 animate-fade-in bg-forest-900/50 p-2 rounded border border-blue-500/30">
                             <div className="flex flex-wrap items-center gap-4 text-xs text-forest-300 px-1">
                                 <label className="flex items-center gap-1 cursor-pointer">
-                                    <input type="radio" checked={state?.dutyType !== DutyType.PLANNED} onChange={() => onChangeDetail(personId, 'dutyType', DutyType.PLANNED)} className="accent-forest-500" /> Planlı
+                                    <input type="radio" checked={state?.dutyType !== DutyType.UNPLANNED} onChange={() => onChangeDetail(personId, 'dutyType', DutyType.PLANNED)} className="accent-forest-500" /> Planlı
                                 </label>
                                 <label className="flex items-center gap-1 cursor-pointer">
                                     <input type="radio" checked={state?.dutyType === DutyType.UNPLANNED} onChange={() => onChangeDetail(personId, 'dutyType', DutyType.UNPLANNED)} className="accent-forest-500" /> Plansız
@@ -2411,4 +2411,3 @@
     </script>
 </body>
 </html>
-
