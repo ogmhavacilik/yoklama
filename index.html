@@ -2185,13 +2185,29 @@
                         const s = stats.find(st => st.id === p.id).s;
                         html += `<tr><td ${seqStyle}>${Number(i + 1)}</td><td colspan="2" ${nStyle}>${p.fullName}</td>`;
                         days.forEach(d => {
-                            const dStr = normalizeDate(d), r = freshRecs.find(x => x.personId === p.id && x.date === dStr), isWe = d.getDay() === 0 || d.getDay() === 6;
-                            let ct = isWe ? 'HT' : 'X';
-                            if (p.activeUntil && dStr > p.activeUntil) ct = 'İ.K'; else if (p.activeFrom && dStr < p.activeFrom) ct = 'P.YOK';
-                            else if (r && r.status !== AttendanceStatus.PRESENT) {
-                                if (r.status === AttendanceStatus.DUTY || r.status === AttendanceStatus.COURSE) ct = (r.dutyLocation || (r.status === AttendanceStatus.COURSE ? 'KURS' : 'GÖREV')).toLocaleUpperCase('tr-TR');
-                                else ct = r.status === AttendanceStatus.LEAVE ? r.leaveType : (r.status === AttendanceStatus.SICK ? 'R' : (r.status === AttendanceStatus.HOSPITAL ? 'H' : (r.status === AttendanceStatus.PUBLIC_HOLIDAY ? 'İ.İ.' : r.status)));
-                            }
+ const dStr = normalizeDate(d); // <-- BURASI OLMALI
+    const r = freshRecs.find(x => x.personId === p.id && x.date === dStr);
+    const isWe = d.getDay() === 0 || d.getDay() === 6;
+
+    let ct = isWe ? 'HT' : 'X';
+
+    if (p.activeUntil && dStr > p.activeUntil) ct = 'İ.K';
+    else if (p.activeFrom && dStr < p.activeFrom) ct = 'P.YOK';
+    else if (r && r.status !== AttendanceStatus.PRESENT) {
+        if (r.status === AttendanceStatus.DUTY || r.status === AttendanceStatus.COURSE) {
+            ct = (r.dutyLocation || (r.status === AttendanceStatus.COURSE ? 'KURS' : 'GÖREV'))
+                .toLocaleUpperCase('tr-TR');
+        }
+        else if (r.status === AttendanceStatus.OTHER) {
+            ct = r.note ? r.note.toLocaleUpperCase('tr-TR') : '';
+        }
+        else {
+            ct = r.status === AttendanceStatus.LEAVE ? r.leaveType
+               : (r.status === AttendanceStatus.SICK ? 'R'
+               : (r.status === AttendanceStatus.HOSPITAL ? 'H'
+               : (r.status === AttendanceStatus.PUBLIC_HOLIDAY ? 'İ.İ.' : r.status)));
+        }
+    }
                             html += `<td ${r && ![AttendanceStatus.PRESENT, AttendanceStatus.DUTY].includes(r.status) ? rbStyle : cStyle}>${(ct === 'MEVCUT' || ct === 'Mevcut') ? '' : ct}</td>`;
                         });
                         activeCols.forEach(col => html += `<td ${numStyle}>${fmt(s[col.key])}</td>`);
