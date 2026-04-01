@@ -2059,7 +2059,7 @@
                     // 7️⃣ FIXED GROUPING LOGIC - ABSENCE BY TYPE PER PERIOD
                     targetP.forEach(p => {
                         const pRecs = freshRecs.filter(x => x.personId === p.id).sort((a,b) => a.date.localeCompare(b.date));
-                        const absenceStates = [AttendanceStatus.LEAVE, AttendanceStatus.SICK, AttendanceStatus.HOSPITAL, AttendanceStatus.PUBLIC_HOLIDAY, AttendanceStatus.OTHER, AttendanceStatus.ABSENT];
+                        const absenceStates = [AttendanceStatus.LEAVE, AttendanceStatus.SICK, AttendanceStatus.HOSPITAL, AttendanceStatus.PUBLIC_HOLIDAY, AttendanceStatus.OTHER, AttendanceStatus.ABSENT, AttendanceStatus.COURSE];
                         
                         let i = 0;
                         while (i < pRecs.length) {
@@ -2070,6 +2070,8 @@
                                 if (currentType === AttendanceStatus.SICK) currentType = 'RAPOR';
                                 if (currentType === AttendanceStatus.HOSPITAL) currentType = 'HASTANE';
                                 if (currentType === AttendanceStatus.PUBLIC_HOLIDAY) currentType = 'İDARİ İZİN';
+                                if (currentType === AttendanceStatus.COURSE) currentType = 'KURS';
+                                if (r.status === AttendanceStatus.OTHER && r.note) currentType = 'D-' + r.note.toLocaleUpperCase('tr-TR');
 
                                 // Group continuous days of same person AND same leave type
                                 while (i + 1 < pRecs.length) {
@@ -2078,6 +2080,8 @@
                                     if (nextType === AttendanceStatus.SICK) nextType = 'RAPOR';
                                     if (nextType === AttendanceStatus.HOSPITAL) nextType = 'HASTANE';
                                     if (nextType === AttendanceStatus.PUBLIC_HOLIDAY) nextType = 'İDARİ İZİN';
+                                    if (nextType === AttendanceStatus.COURSE) nextType = 'KURS';
+                                    if (nextR.status === AttendanceStatus.OTHER && nextR.note) nextType = 'D-' + nextR.note.toLocaleUpperCase('tr-TR');
 
                                     if (absenceStates.includes(nextR.status) && nextType === currentType) {
                                         i++;
@@ -2123,13 +2127,29 @@
                     });
 
                     const totalFixed = targetP.length, gayriMevcutCount = uniqueAbsentIds.size, hazirCount = totalFixed - gayriMevcutCount;
+                    
+                    const otherNotes = new Set();
+                    freshRecs.forEach(r => {
+                        if (r.status === AttendanceStatus.OTHER && r.note) {
+                            otherNotes.add(r.note.toLocaleUpperCase('tr-TR'));
+                        }
+                    });
+                    const dynamicOtherCols = Array.from(otherNotes).sort().map(note => ({
+                        key: `ot_${note}`,
+                        label: `D-${note}`
+                    }));
+
                     const allPossibleCols = [
                         { key: 'w', label: 'X' }, { key: 'ht', label: 'HT' }, 
                         { key: 'gp', label: 'PLANLI' }, { key: 'gu', label: 'PLANSIZ' },
-                        { key: 'yi', label: 'Yİ' }, { key: 'mi', label: 'Mİ' }, { key: 'gi', label: 'Gİ' }, { key: 'ygi', label: 'YGİ' }, { key: 'fmi', label: 'FMİ' }, { key: 'yfmi', label: 'YFMİ' }, { key: 'rt', label: 'İİ' }, { key: 'r', label: 'R' }, { key: 'h', label: 'H' }, { key: 'k', label: 'K' }, { key: 'ot', label: 'D' }
+                        { key: 'yi', label: 'Yİ' }, { key: 'mi', label: 'Mİ' }, { key: 'gi', label: 'Gİ' }, { key: 'ygi', label: 'YGİ' }, { key: 'fmi', label: 'FMİ' }, { key: 'yfmi', label: 'YFMİ' }, { key: 'rt', label: 'İİ' }, { key: 'r', label: 'R' }, { key: 'h', label: 'H' }, { key: 'k', label: 'K' }, { key: 'ot', label: 'D' },
+                        ...dynamicOtherCols
                     ];
                     const stats = targetP.map(p => {
                         let s = { w: 0, gp: 0, gu: 0, ht: 0, yi: 0, mi: 0, gi: 0, ygi: 0, fmi: 0, yfmi: 0, rt: 0, r: 0, h: 0, k: 0, ot: 0 };
+                        // Initialize dynamic columns
+                        dynamicOtherCols.forEach(c => s[c.key] = 0);
+
                         days.forEach(d => {
                             const dStr = normalizeDate(d), r = freshRecs.find(x => x.personId === p.id && x.date === dStr), isWe = d.getDay() === 0 || d.getDay() === 6;
                             if (!((p.activeUntil && dStr > p.activeUntil) || (p.activeFrom && dStr < p.activeFrom))) {
@@ -2145,7 +2165,14 @@
                                         else if (r.leaveType === LeaveType.HALF_OVERTIME) { s.yfmi += 0.5; s.w += 0.5; }
                                         else if (r.leaveType === LeaveType.OVERTIME) s.fmi++;
                                     } else if (r.status === AttendanceStatus.PUBLIC_HOLIDAY) s.rt++;
-                                    else if (r.status === AttendanceStatus.OTHER) s.ot++;
+                                    else if (r.status === AttendanceStatus.OTHER) {
+                                        if (r.note) {
+                                            const noteKey = `ot_${r.note.toLocaleUpperCase('tr-TR')}`;
+                                            s[noteKey] = (s[noteKey] || 0) + 1;
+                                        } else {
+                                            s.ot++;
+                                        }
+                                    }
                                 } else { if (isWe) s.ht++; else s.w++; }
                             }
                         });
