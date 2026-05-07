@@ -520,20 +520,28 @@
         };
 
         // AttendanceControl Component
-        const AttendanceControl = ({ personId, state, isWeeklyMode, onChangeStatus, onChangeDetail }) => {
+        const AttendanceControl = ({ personId, state, isWeeklyMode, onChangeStatus, onChangeDetail, isWeekend }) => {
             const status = state?.status;
+
+            const handleStatusClick = (newStatus) => {
+                if (isWeekend && status === newStatus) {
+                    onChangeStatus(personId, AttendanceStatus.PRESENT);
+                } else {
+                    onChangeStatus(personId, newStatus);
+                }
+            };
 
             return (
                 <div className="flex flex-col xl:flex-row items-start xl:items-center gap-4 w-full">
                     <div className="flex flex-wrap gap-2 w-full xl:w-auto">
-                        <button onClick={() => onChangeStatus(personId, AttendanceStatus.PRESENT)} className={`px-3 py-1.5 text-xs sm:text-sm border rounded-md transition-all flex-grow sm:flex-grow-0 ${status === AttendanceStatus.PRESENT ? 'bg-green-600 border-green-500 text-white' : 'bg-forest-900 border-forest-700 text-forest-400 hover:border-forest-500'}`}>
+                        <button onClick={() => handleStatusClick(AttendanceStatus.PRESENT)} className={`px-3 py-1.5 text-xs sm:text-sm border rounded-md transition-all flex-grow sm:flex-grow-0 ${status === AttendanceStatus.PRESENT ? 'bg-green-600 border-green-500 text-white' : 'bg-forest-900 border-forest-700 text-forest-400 hover:border-forest-500'}`}>
                             Mevcut
                         </button>
 
-                        <button onClick={() => onChangeStatus(personId, AttendanceStatus.DUTY)} className={`px-3 py-1.5 text-xs sm:text-sm border rounded-md transition-all flex-grow sm:flex-grow-0 ${status === AttendanceStatus.DUTY ? 'bg-blue-600 border-blue-500 text-white' : 'bg-forest-900 border-forest-700 text-forest-400 hover:border-forest-500'}`}>
+                        <button onClick={() => handleStatusClick(AttendanceStatus.DUTY)} className={`px-3 py-1.5 text-xs sm:text-sm border rounded-md transition-all flex-grow sm:flex-grow-0 ${status === AttendanceStatus.DUTY ? 'bg-blue-600 border-blue-500 text-white' : 'bg-forest-900 border-forest-700 text-forest-400 hover:border-forest-500'}`}>
                             Görev
                         </button>
-                         <button onClick={() => onChangeStatus(personId, AttendanceStatus.COURSE)} className={`px-3 py-1.5 text-xs sm:text-sm border rounded-md transition-all flex-grow sm:flex-grow-0 ${status === AttendanceStatus.COURSE ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-forest-900 border-forest-700 text-forest-400 hover:border-forest-500'}`}>
+                         <button onClick={() => handleStatusClick(AttendanceStatus.COURSE)} className={`px-3 py-1.5 text-xs sm:text-sm border rounded-md transition-all flex-grow sm:flex-grow-0 ${status === AttendanceStatus.COURSE ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-forest-900 border-forest-700 text-forest-400 hover:border-forest-500'}`}>
                             Kurs
                         </button>
 
@@ -548,14 +556,14 @@
                                 activeClass = 'bg-forest-900 border-forest-700 text-forest-400 hover:border-forest-500';
                             }
                             return (
-                                <button key={s} onClick={() => onChangeStatus(personId, s)} className={`px-3 py-1.5 text-xs sm:text-sm border rounded-md transition-all flex-grow sm:flex-grow-0 ${activeClass}`}>
+                                <button key={s} onClick={() => handleStatusClick(s)} className={`px-3 py-1.5 text-xs sm:text-sm border rounded-md transition-all flex-grow sm:flex-grow-0 ${activeClass}`}>
                                     {s}
                                 </button>
                             );
                         })}
 
                         <button
-                            onClick={() => onChangeStatus(personId, AttendanceStatus.PUBLIC_HOLIDAY)}
+                            onClick={() => handleStatusClick(AttendanceStatus.PUBLIC_HOLIDAY)}
                             className={`px-3 py-1.5 text-xs sm:text-sm border rounded-md transition-all flex-grow sm:flex-grow-0 ${status === AttendanceStatus.PUBLIC_HOLIDAY
                                     ? 'bg-orange-600 border-orange-500 text-white'
                                     : 'bg-forest-900 border-forest-700 text-forest-400 hover:border-forest-500'
@@ -565,7 +573,7 @@
                         </button>
 
                         <button
-                            onClick={() => onChangeStatus(personId, AttendanceStatus.OTHER)}
+                            onClick={() => handleStatusClick(AttendanceStatus.OTHER)}
                             className={`px-3 py-1.5 text-xs sm:text-sm border rounded-md transition-all flex-grow sm:flex-grow-0 ${status === AttendanceStatus.OTHER
                                     ? 'bg-purple-600 border-purple-500 text-white'
                                     : 'bg-forest-900 border-forest-700 text-forest-400 hover:border-forest-500'
@@ -574,7 +582,7 @@
                             Diğer
                         </button>
 
-                         <button onClick={() => onChangeStatus(personId, AttendanceStatus.ABSENT)} className={`px-3 py-1.5 text-xs sm:text-sm border rounded-md transition-all flex-grow sm:flex-grow-0 ${status === AttendanceStatus.ABSENT ? 'bg-red-600 border-red-500 text-white' : 'bg-forest-900 border-forest-700 text-forest-400 hover:border-forest-500'}`}>
+                         <button onClick={() => handleStatusClick(AttendanceStatus.ABSENT)} className={`px-3 py-1.5 text-xs sm:text-sm border rounded-md transition-all flex-grow sm:flex-grow-0 ${status === AttendanceStatus.ABSENT ? 'bg-red-600 border-red-500 text-white' : 'bg-forest-900 border-forest-700 text-forest-400 hover:border-forest-500'}`}>
                             Yok
                         </button>
                     </div>
@@ -1298,7 +1306,33 @@
 
             // 3️⃣ & 4️⃣ Resimli Excel Raporu (Gördüğünü Al WYSIWYG Flow)
             const exportPersonnelExcel = async () => {
-                const activePersonnel = plList.filter(p => !p.activeUntil);
+                const getPUnit = (pers) => {
+                    if (YONETIM_NAMES.includes(pers.fullName)) return "YÖNETİM";
+                    if (pers.unit) return pers.unit;
+                    const titleUpper = (pers.title || '').toLocaleUpperCase('tr-TR');
+                    if (titleUpper.includes('BELL')) return "BELL-429";
+                    if (titleUpper.includes('C-650')) return "C-650";
+                    if (titleUpper.includes('B-360')) return "B-360";
+                    if (titleUpper.includes('T-70')) return "T-70";
+                    if (titleUpper.includes('AT-802')) return "AT-802";
+                    if (titleUpper.includes('TEKNİ') || titleUpper.includes('UÇAK')) return "TEKNİK EKİP";
+                    if (titleUpper.includes('MEMUR') || titleUpper.includes('İŞÇİ') || titleUpper.includes('MÜHENDİS') || titleUpper.includes('ŞÖFÖR') || [Role.DRIVER, Role.CLEANING, Role.KITCHEN, Role.TEA_SERVICE, Role.OTHER].includes(pers.role)) return "YER DESTEK";
+                    return "İDARİ";
+                };
+
+                const unitOrder = ["YÖNETİM", "BELL-429", "C-650", "B-360", "T-70", "AT-802", "TEKNİK EKİP", "YER DESTEK", "İDARİ"];
+                
+                const activePersonnel = plList
+                    .filter(p => !p.activeUntil)
+                    .sort((a, b) => {
+                        const unitA = getPUnit(a);
+                        const unitB = getPUnit(b);
+                        const idxA = unitOrder.indexOf(unitA);
+                        const idxB = unitOrder.indexOf(unitB);
+                        if (idxA !== idxB) return idxA - idxB;
+                        return (a.rank || 999) - (b.rank || 999);
+                    });
+
                 if (activePersonnel.length === 0) return;
 
                 setExportProgress(1); // 4️⃣ Progress Start
@@ -1308,33 +1342,35 @@
                 
                 // 5️⃣ & 6️⃣ Excel Tablo Stili ve Başlık Satırı
                 worksheet.columns = [
-                    { header: 'SIRA NO', key: 'sira', width: 10 },
+                    { header: 'SIRA NO', key: 'sira', width: 12 },
                     { header: 'AD SOYADI', key: 'ad', width: 35 },
-                    { header: 'TC NO', key: 'tc', width: 20 },
+                    { header: 'TC NO', key: 'tc', width: 22 },
                     { header: 'BİRİMİ', key: 'birim', width: 25 },
-                    { header: 'FOTOĞRAF', key: 'foto', width: 15 }
+                    { header: 'FOTOĞRAF', key: 'foto', width: 20 }
                 ];
 
                 worksheet.getRow(1).font = { color: { argb: 'FFFFFFFF' }, bold: true };
                 worksheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF228B22' } };
                 worksheet.getRow(1).alignment = { vertical: 'middle', horizontal: 'center' };
+                worksheet.getRow(1).height = 30;
 
                 let preparedCount = 0;
+                // Daha yüksek kalite için canvas boyutu artırıldı
                 const offscreenCanvas = document.createElement('canvas');
-                offscreenCanvas.width = 60;
-                offscreenCanvas.height = 60;
+                offscreenCanvas.width = 400;
+                offscreenCanvas.height = 400;
                 const ctx = offscreenCanvas.getContext('2d');
 
                 for (let i = 0; i < activePersonnel.length; i++) {
                     const p = activePersonnel[i];
                     const rowIndex = i + 2;
-                    worksheet.getRow(rowIndex).height = 55;
+                    // Satır yüksekliği 100% artırıldı
+                    worksheet.getRow(rowIndex).height = 110;
                     worksheet.getCell(`A${rowIndex}`).value = i + 1;
                     worksheet.getCell(`B${rowIndex}`).value = p.fullName;
                     worksheet.getCell(`C${rowIndex}`).value = p.tcNo || '';
                     worksheet.getCell(`D${rowIndex}`).value = p.unit || getDisplayTitle(p.title, p.role);
                     
-                    // GÖRSEL KAYNAK: Kalıcı gerçeklik olan RAM önbelleğini esas al (WYSIWYG)
                     let sourceB64 = window.photoCache[p.id];
                     if (!sourceB64 && p.photoUrl) {
                         const fIdMatch = p.photoUrl.match(/[-\w]{25,}/);
@@ -1347,10 +1383,10 @@
                                 const img = new Image();
                                 img.onload = () => {
                                     ctx.fillStyle = '#0b2918'; 
-                                    ctx.fillRect(0, 0, 60, 60);
+                                    ctx.fillRect(0, 0, 400, 400);
                                     const s = Math.min(img.width, img.height);
-                                    ctx.drawImage(img, (img.width - s) / 2, (img.height - s) / 2, s, s, 0, 0, 60, 60);
-                                    resolve(offscreenCanvas.toDataURL('image/jpeg', 0.8));
+                                    ctx.drawImage(img, (img.width - s) / 2, (img.height - s) / 2, s, s, 0, 0, 400, 400);
+                                    resolve(offscreenCanvas.toDataURL('image/jpeg', 0.95)); // En yüksek kalite
                                 };
                                 img.onerror = () => resolve(null);
                                 img.src = sourceB64;
@@ -1361,9 +1397,10 @@
                                     base64: imgB64,
                                     extension: 'jpeg',
                                 });
+                                // Resim boyutu artırıldı
                                 worksheet.addImage(imageId, {
                                     tl: { col: 4.1, row: i + 1.1 },
-                                    ext: { width: 60, height: 60 }
+                                    ext: { width: 140, height: 140 }
                                 });
                             }
                         } catch(e) { console.error("Image error", e); }
@@ -2097,6 +2134,185 @@
             return dates;
         };
 
+        const ReportDialog = ({ type, onClose, personnel, attendance }) => {
+            const today = getTodayString();
+
+            const unitOrder = ["YÖNETİM", "BELL-429", "C-650", "B-360", "T-70", "AT-802", "TEKNİK EKİP", "YER DESTEK", "İDARİ"];
+            const getPUnit = (p) => {
+                if (YONETIM_NAMES.includes(p.fullName)) return "YÖNETİM";
+                if (p.unit && unitOrder.includes(p.unit)) return p.unit;
+                const titleUpper = (p.title || '').toLocaleUpperCase('tr-TR');
+                if (titleUpper.includes('BELL')) return "BELL-429";
+                if (titleUpper.includes('C-650')) return "C-650";
+                if (titleUpper.includes('B-360')) return "B-360";
+                if (titleUpper.includes('T-70')) return "T-70";
+                if (titleUpper.includes('AT-802')) return "AT-802";
+                if (titleUpper.includes('TEKNİ') || titleUpper.includes('UÇAK')) return "TEKNİK EKİP";
+                if (titleUpper.includes('MEMUR') || titleUpper.includes('İŞÇİ') || titleUpper.includes('MÜHENDİS') || titleUpper.includes('ŞÖFÖR') || [Role.DRIVER, Role.CLEANING, Role.KITCHEN, Role.TEA_SERVICE, Role.OTHER].includes(p.role)) return "YER DESTEK";
+                return "İDARİ";
+            };
+
+            const filteredPersonnel = personnel.filter(p => {
+                const isSeparated = p.activeUntil && today > p.activeUntil;
+                const isYerDestek = getPUnit(p) === "YER DESTEK";
+                return !isSeparated && !isYerDestek;
+            });
+            
+            const Header = () => (
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 border-b border-forest-500 pb-4 gap-4">
+                    <div className="flex items-center gap-4">
+                       <div className="bg-orange-600 p-2 sm:p-3 rounded-lg shadow-inner"><LucideIcons.Plane className="text-white w-6 h-6 sm:w-8 sm:h-8" /></div>
+                       <div>
+                            <h2 className="text-xl sm:text-3xl font-extrabold text-white tracking-tight">
+                                {type === 'MESAI' && 'MESAİ DURUMU (GÜNLÜK)'}
+                                {type === 'FMİ' && 'FAZLA MESAİ İZNİ (GÜNLÜK)'}
+                                {type === 'GÖREV' && 'GÖREV DURUMU (GÜNLÜK)'}
+                            </h2>
+                            <p className="text-forest-400 text-xs sm:text-sm font-medium">{new Date().toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric', weekday: 'long' })}</p>
+                       </div>
+                    </div>
+                    <button onClick={onClose} className="absolute sm:relative top-4 right-4 sm:top-0 sm:right-0 bg-white/10 hover:bg-red-600 text-white p-2 sm:p-3 rounded-full transition-all duration-300 group shadow-lg">
+                        <LucideIcons.X className="group-hover:rotate-90 transition-transform w-6 h-6 sm:w-8 sm:h-8" />
+                    </button>
+                </div>
+            );
+
+            const PersonItem = ({ p }) => (
+                <div className="flex items-center gap-4 p-3 bg-forest-950/40 rounded-xl border border-forest-700/30 hover:border-orange-500/30 hover:bg-forest-800/40 transition-all duration-300 group shadow-sm hover:shadow-orange-500/10">
+                    <div className="hidden sm:block w-12 h-12 rounded-lg border border-forest-700/50 overflow-hidden bg-forest-900 flex-shrink-0 group-hover:border-orange-500/30 transition-colors">
+                        <SafeImage src={p.photoUrl} personId={p.id} className="personnel-photo-square" />
+                    </div>
+                    <div className="overflow-hidden">
+                        <div className="text-sm sm:text-base font-bold text-white group-hover:text-orange-400 transition-colors truncate">{p.fullName}</div>
+                        <div className="text-[10px] sm:text-xs text-forest-400 font-semibold uppercase tracking-wider truncate">{getDisplayTitle(p.title, p.role)}</div>
+                    </div>
+                </div>
+            );
+
+            const GroupedPersonList = ({ list, emptyMessage, cols = "sm:grid-cols-2" }) => {
+                const unitsPresent = unitOrder.filter(unit => list.some(p => getPUnit(p) === unit));
+                
+                if (list.length === 0) return <p className="text-center text-forest-400 py-10 italic">{emptyMessage}</p>;
+
+                return (
+                    <div className="space-y-6">
+                        {unitsPresent.map(unit => {
+                            const peopleInUnit = list.filter(p => getPUnit(p) === unit)
+                                .sort((a, b) => (a.rank || 999) - (b.rank || 999));
+                            
+                            return (
+                                <div key={unit} className="space-y-2">
+                                    <div className="flex items-center gap-3">
+                                        <div className="text-[10px] sm:text-xs font-black text-orange-500/80 uppercase tracking-[0.2em] whitespace-nowrap">
+                                            {unit}
+                                        </div>
+                                        <div className="h-px bg-forest-800 flex-1"></div>
+                                        <span className="text-[10px] font-bold text-forest-600 bg-forest-900/50 px-2 py-0.5 rounded-full">{peopleInUnit.length}</span>
+                                    </div>
+                                    <div className={`grid grid-cols-1 ${cols} gap-2`}>
+                                        {peopleInUnit.map(p => <PersonItem key={p.id} p={p} />)}
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                );
+            };
+
+            if (type === 'MESAI') {
+                const mesaiList = filteredPersonnel.filter(p => {
+                    const r = attendance.find(a => a.personId === p.id && a.date === today);
+                    return (r?.status === AttendanceStatus.PRESENT) || (!r); 
+                }).sort((a, b) => (a.rank || 999) - (b.rank || 999));
+
+                const beklemeList = filteredPersonnel.filter(p => {
+                    const r = attendance.find(a => a.personId === p.id && a.date === today);
+                    return r?.status === AttendanceStatus.OTHER && r?.note?.toLocaleUpperCase('tr-TR').includes('BEKLEME');
+                }).sort((a, b) => (a.rank || 999) - (b.rank || 999));
+
+                const filteredMesai = mesaiList.filter(p => !beklemeList.find(b => b.id === p.id));
+
+                return (
+                    <div className="fixed inset-0 bg-forest-950/98 z-[200] overflow-y-auto p-4 md:p-8 md:px-12 animate-fade-in backdrop-blur-xl flex flex-col">
+                        <div className="w-full">
+                            <Header />
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-12">
+                                <div>
+                                    <h3 className="text-xl sm:text-2xl font-black text-green-400 mb-4 sm:mb-6 flex items-center gap-3 bg-green-950/30 p-3 sm:p-4 rounded-lg border-l-4 border-green-500">
+                                        MESAİDE OLANLAR ({filteredMesai.length})
+                                    </h3>
+                                    <GroupedPersonList list={filteredMesai} emptyMessage="Mesaide personel bulunamadı." />
+                                </div>
+                                <div>
+                                    <h3 className="text-xl sm:text-2xl font-black text-blue-400 mb-4 sm:mb-6 flex items-center gap-3 bg-blue-950/30 p-3 sm:p-4 rounded-lg border-l-4 border-blue-500">
+                                        BEKLEME YAZILANLAR ({beklemeList.length})
+                                    </h3>
+                                    <GroupedPersonList list={beklemeList} emptyMessage="Bekleme yazılan personel bulunamadı." />
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                );
+            }
+
+            if (type === 'GÖREV') {
+                const dutyRecs = attendance.filter(a => a.date === today && a.status === AttendanceStatus.DUTY);
+                const locations = [...new Set(dutyRecs.map(r => (r.dutyLocation || 'BELİRSİZ').toLocaleUpperCase('tr-TR')))].sort();
+
+                return (
+                    <div className="fixed inset-0 bg-forest-950/98 z-[200] overflow-y-auto p-4 md:p-8 md:px-12 animate-fade-in backdrop-blur-xl flex flex-col">
+                        <div className="w-full">
+                            <Header />
+                            {locations.length === 0 ? (
+                                <div className="text-center py-10 sm:py-20 bg-forest-900/20 rounded-3xl border border-dashed border-forest-700">
+                                    <LucideIcons.Search size={64} className="mx-auto text-forest-600 mb-4" />
+                                    <p className="text-forest-400 text-lg sm:text-xl">Bugün görevde olan personel bulunamadı.</p>
+                                </div>
+                            ) : (
+                                <div className="flex flex-col sm:flex-row sm:flex-nowrap sm:overflow-x-auto gap-4 sm:gap-8 pb-12 pt-2 scrollbar-thin scrollbar-thumb-orange-600 scrollbar-track-forest-900 pr-0 sm:pr-12 min-h-fit sm:min-h-[calc(100vh-250px)]">
+                                    {locations.map(loc => {
+                                        const peopleInLoc = filteredPersonnel.filter(p => dutyRecs.some(r => r.personId === p.id && (r.dutyLocation || 'BELİRSİZ').toLocaleUpperCase('tr-TR') === loc));
+                                        
+                                        return (
+                                            <div key={loc} className="bg-forest-900/40 p-4 sm:p-6 rounded-2xl border border-forest-700/50 shadow-2xl w-full sm:min-w-[280px] sm:max-w-[400px] flex-shrink-0 h-fit hover:border-orange-500/30 transition-all duration-300">
+                                                <h3 className="text-lg sm:text-xl font-black text-orange-400 mb-4 sm:mb-6 flex items-center gap-3 border-b border-orange-500/30 pb-3 uppercase tracking-tighter sticky top-0 bg-forest-900/10 backdrop-blur-sm z-10">
+                                                    {loc} <span className="ml-auto bg-orange-600/20 text-orange-400 text-sm px-3 py-1 rounded-full">{peopleInLoc.length}</span>
+                                                </h3>
+                                                <GroupedPersonList list={peopleInLoc} emptyMessage="Bu konumda personel bulunamadı." cols="grid-cols-1" />
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                );
+            }
+
+            if (type === 'FMİ') {
+                const fmiPeople = filteredPersonnel.filter(p => {
+                    const r = attendance.find(a => a.personId === p.id && a.date === today);
+                    return r?.status === AttendanceStatus.LEAVE && r?.leaveType === LeaveType.OVERTIME;
+                }).sort((a, b) => (a.rank || 999) - (b.rank || 999));
+
+                return (
+                    <div className="fixed inset-0 bg-forest-950/98 z-[200] overflow-y-auto p-4 md:p-8 md:px-12 animate-fade-in backdrop-blur-xl flex flex-col">
+                        <div className="w-full">
+                            <Header />
+                            <div className="max-w-4xl mx-auto w-full">
+                                <h3 className="text-xl md:text-3xl font-black text-yellow-400 mb-6 md:mb-8 flex items-center justify-center gap-4 bg-yellow-950/20 py-4 md:py-6 rounded-2xl border-2 border-yellow-500/30 shadow-2xl text-center px-4">
+                                    FAZLA MESAİ İZNİ (F.M.İ) <span className="bg-yellow-500 text-yellow-950 px-3 md:px-4 py-1 rounded-full text-base md:text-xl">{fmiPeople.length}</span>
+                                </h3>
+                                <GroupedPersonList list={fmiPeople} emptyMessage="Bugün fazla mesai izni kullanan personel bulunamadı." />
+                            </div>
+                        </div>
+                    </div>
+                );
+            }
+
+            return null;
+        };
+
         const AttendanceView = ({ initialModel = null, initialStartDate = getTodayString(), initialEndDate = getTodayString(), initialSearchName = null, onSave: onSaveExternal }) => {
             const [selModel, setSelModel] = useState(initialModel);
             const [searchName, setSearchName] = useState(initialSearchName);
@@ -2131,6 +2347,7 @@
             const [isReportReady, setIsReportReady] = useState(false);
             const [reportUnit, setReportUnit] = useState('TÜM BİRİMLER');
             const [reportSearch, setReportSearch] = useState('');
+            const [reportModalType, setReportModalType] = useState(null);
 
             const showAttendanceFromReport = () => {
                 if (reportUnit === 'TÜM BİRİMLER') {
@@ -3152,7 +3369,18 @@
                                     </div>
                                 </div>
                             </div>
-                            <AttendanceControl personId={p.id} state={s} isWeeklyMode={isWeeklyMode} aircraftModel={selModel} onChangeStatus={handleStatusChangeWithAuth} onChangeDetail={handleDetailChangeWithAuth} />
+                            <AttendanceControl 
+                                personId={p.id} 
+                                state={s} 
+                                isWeeklyMode={isWeeklyMode} 
+                                aircraftModel={selModel} 
+                                onChangeStatus={handleStatusChangeWithAuth} 
+                                onChangeDetail={handleDetailChangeWithAuth} 
+                                isWeekend={(() => {
+                                    const d = new Date(rangeStartDate + 'T12:00:00');
+                                    return d.getDay() === 0 || d.getDay() === 6;
+                                })()}
+                            />
                         </div>
                         {shouldBlur && <div className="absolute inset-0 flex items-center justify-center"><Button onClick={() => openDetailModalWithAuth(p)}><Edit2 size={16} className="mr-2" /> Ayrıntıyı Gör ve Düzenle</Button></div>}
                     </div>
@@ -3190,6 +3418,31 @@
                             )})}
                         </div>
                     </Card>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <button 
+                            onClick={() => setReportModalType('MESAI')} 
+                            className="bg-orange-600 hover:bg-orange-500 text-white font-bold py-6 rounded-2xl shadow-[0_10px_20px_-10px_rgba(234,88,12,0.5)] flex flex-col items-center justify-center gap-3 transition-all active:scale-95 border-2 border-orange-400 group overflow-hidden relative"
+                        >
+                            <div className="absolute inset-0 bg-white/10 translate-y-full group-hover:translate-y-0 transition-transform duration-300"></div>
+                            <span className="text-xl relative z-10 tracking-tight">MESAİ (GÜNLÜK)</span>
+                        </button>
+                        <button 
+                            onClick={() => setReportModalType('FMİ')} 
+                            className="bg-orange-600 hover:bg-orange-500 text-white font-bold py-6 rounded-2xl shadow-[0_10px_20px_-10px_rgba(234,88,12,0.5)] flex flex-col items-center justify-center gap-3 transition-all active:scale-95 border-2 border-orange-400 group overflow-hidden relative"
+                        >
+                            <div className="absolute inset-0 bg-white/10 translate-y-full group-hover:translate-y-0 transition-transform duration-300"></div>
+                            <span className="text-xl relative z-10 tracking-tight">FAZLA MESAİ (GÜNLÜK)</span>
+                        </button>
+                        <button 
+                            onClick={() => setReportModalType('GÖREV')} 
+                            className="bg-orange-600 hover:bg-orange-500 text-white font-bold py-6 rounded-2xl shadow-[0_10px_20px_-10px_rgba(234,88,12,0.5)] flex flex-col items-center justify-center gap-3 transition-all active:scale-95 border-2 border-orange-400 group overflow-hidden relative"
+                        >
+                            <div className="absolute inset-0 bg-white/10 translate-y-full group-hover:translate-y-0 transition-transform duration-300"></div>
+                            <span className="text-xl relative z-10 tracking-tight">GÖREV (GÜNLÜK)</span>
+                        </button>
+                    </div>
+
                     <Card title="Raporlar ve Çıktılar">
                         <div className="flex flex-col gap-6">
                             <div className="bg-forest-900/80 p-6 rounded-lg border border-forest-600 shadow-md">
@@ -3215,6 +3468,15 @@
                             </div>
                         </div>
                     </Card>
+                    
+                    {reportModalType && (
+                        <ReportDialog 
+                            type={reportModalType} 
+                            onClose={() => setReportModalType(null)} 
+                            personnel={allPersonnel} 
+                            attendance={allRecs} 
+                        />
+                    )}
                 </div>
             );
 
@@ -3283,7 +3545,23 @@
                                 <div className="p-4 overflow-y-auto flex-1 space-y-3">{Object.keys(detailDays).sort().map(dStr => {
                                     const dateObjArr = dStr.split('-').map(Number);
                                     const noonDate = new Date(dateObjArr[0], dateObjArr[1]-1, dateObjArr[2], 12,0,0);
-                                    return (<div key={dStr} className={`p-3 rounded border ${noonDate.getDay() === 0 || noonDate.getDay() === 6 ? 'bg-forest-800/30 border-forest-700' : 'bg-forest-950/30 border-forest-800'} flex flex-col lg:flex-row items-center gap-4`}><div className="w-full lg:w-32 flex-shrink-0 text-center lg:text-left"><div className="font-bold text-white">{noonDate.toLocaleDateString('tr-TR')}</div><div className="text-xs text-forest-400 uppercase">{noonDate.toLocaleDateString('tr-TR', { weekday: 'long' })}</div></div><div className="flex-1 w-full"><AttendanceControl personId={dStr} state={detailDays[dStr]} onChangeStatus={(id, s) => handleModalStatusChange(id, s)} onChangeDetail={(id, f, v) => handleModalDayChange(id, f, v)} /></div></div>)
+                                    return (
+                                        <div key={dStr} className={`p-3 rounded border ${noonDate.getDay() === 0 || noonDate.getDay() === 6 ? 'bg-forest-800/30 border-forest-700' : 'bg-forest-950/30 border-forest-800'} flex flex-col lg:flex-row items-center gap-4`}>
+                                            <div className="w-full lg:w-32 flex-shrink-0 text-center lg:text-left">
+                                                <div className="font-bold text-white">{noonDate.toLocaleDateString('tr-TR')}</div>
+                                                <div className="text-xs text-forest-400 uppercase">{noonDate.toLocaleDateString('tr-TR', { weekday: 'long' })}</div>
+                                            </div>
+                                            <div className="flex-1 w-full">
+                                                <AttendanceControl 
+                                                    personId={dStr} 
+                                                    state={detailDays[dStr]} 
+                                                    onChangeStatus={(id, s) => handleModalStatusChange(id, s)} 
+                                                    onChangeDetail={(id, f, v) => handleModalDayChange(id, f, v)} 
+                                                    isWeekend={noonDate.getDay() === 0 || noonDate.getDay() === 6}
+                                                />
+                                            </div>
+                                        </div>
+                                    )
                                 })}</div>
                                 <div className="p-4 border-t border-forest-700 bg-forest-950 flex justify-end gap-2"><Button variant="secondary" onClick={() => { setDetailModalOpen(false); setDetailPerson(null) }}>İptal</Button><Button onClick={saveModal}>Kaydet</Button></div>
                             </div>
@@ -3342,4 +3620,3 @@
     </script>
 </body>
 </html>
-
