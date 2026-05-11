@@ -525,7 +525,7 @@
 
             const handleStatusClick = (newStatus) => {
                 if (isWeekend && status === newStatus) {
-                    onChangeStatus(personId, AttendanceStatus.PRESENT);
+                    onChangeStatus(personId, undefined);
                 } else {
                     onChangeStatus(personId, newStatus);
                 }
@@ -534,7 +534,7 @@
             return (
                 <div className="flex flex-col xl:flex-row items-start xl:items-center gap-4 w-full">
                     <div className="flex flex-wrap gap-2 w-full xl:w-auto">
-                        <button onClick={() => handleStatusClick(AttendanceStatus.PRESENT)} className={`px-3 py-1.5 text-xs sm:text-sm border rounded-md transition-all flex-grow sm:flex-grow-0 ${status === AttendanceStatus.PRESENT ? 'bg-green-600 border-green-500 text-white' : 'bg-forest-900 border-forest-700 text-forest-400 hover:border-forest-500'}`}>
+                        <button onClick={() => handleStatusClick(AttendanceStatus.PRESENT)} className={`px-3 py-1.5 text-xs sm:text-sm border rounded-md transition-all flex-grow sm:flex-grow-0 ${(status === AttendanceStatus.PRESENT || (!status && !isWeekend)) ? 'bg-green-600 border-green-500 text-white' : 'bg-forest-900 border-forest-700 text-forest-400 hover:border-forest-500'}`}>
                             Mevcut
                         </button>
 
@@ -2136,6 +2136,8 @@
 
         const ReportDialog = ({ type, onClose, personnel, attendance }) => {
             const today = getTodayString();
+            const todayObj = new Date(today + 'T12:00:00');
+            const isTodayWeekend = todayObj.getDay() === 0 || todayObj.getDay() === 6;
 
             const unitOrder = ["YÖNETİM", "BELL-429", "C-650", "B-360", "T-70", "AT-802", "TEKNİK EKİP", "YER DESTEK", "İDARİ"];
             const getPUnit = (p) => {
@@ -2222,7 +2224,10 @@
             if (type === 'MESAI') {
                 const mesaiList = filteredPersonnel.filter(p => {
                     const r = attendance.find(a => a.personId === p.id && a.date === today);
-                    return (r?.status === AttendanceStatus.PRESENT) || (!r); 
+                    if (isTodayWeekend) {
+                        return r?.status === AttendanceStatus.PRESENT;
+                    }
+                    return !r || !r.status || r.status === AttendanceStatus.PRESENT;
                 }).sort((a, b) => (a.rank || 999) - (b.rank || 999));
 
                 const beklemeList = filteredPersonnel.filter(p => {
@@ -3222,7 +3227,7 @@
                         days.forEach(d => {
                             const dStr = normalizeDate(d), r = freshRecs.find(x => x.personId === p.id && x.date === dStr), isWe = d.getDay() === 0 || d.getDay() === 6;
                             if (!((p.activeUntil && dStr > p.activeUntil) || (p.activeFrom && dStr < p.activeFrom))) {
-                                if (r) {
+                                if (r && r.status) {
                                     if (r.status === AttendanceStatus.PRESENT) { if (isWe) s.ht++; else s.w++; }
                                     else if (r.status === AttendanceStatus.DUTY) { if ((r.dutyType || DutyType.PLANNED) === DutyType.UNPLANNED) s.gu++; else s.gp++; }
                                     else if (r.status === AttendanceStatus.COURSE) s.k++;
@@ -3289,7 +3294,7 @@
 
     if (p.activeUntil && dStr > p.activeUntil) ct = 'İ.K';
     else if (p.activeFrom && dStr < p.activeFrom) ct = 'P.YOK';
-    else if (r && r.status !== AttendanceStatus.PRESENT) {
+    else if (r && r.status && r.status !== AttendanceStatus.PRESENT) {
         if (r.status === AttendanceStatus.DUTY || r.status === AttendanceStatus.COURSE) {
             ct = (r.dutyLocation || (r.status === AttendanceStatus.COURSE ? 'KURS' : 'GÖREV'))
                 .toLocaleUpperCase('tr-TR');
