@@ -142,7 +142,7 @@
 
         const YONETIM_NAMES = ["MEHMET SEFA YÜCEDAĞ", "TEZCAN GÜZER", "ALPER ÖZMETİN" ,"MURAT AKMEŞE"];
 
-        const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycby5oN4pVaftJwfYXRKRPS6P0-7IIAn3gSd7tH6XGqEJAL7Ki94U_y0KlpgJJUHX7dil/exec"; 
+        const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzjgsoveqIQS4iLXDBYJrIuYX5yryjj1AKVdejNPCrzL1lSx0EYAEX2ZhcE94uDLpuc/exec"; 
 
         const CITIES = ['Adana', 'Adıyaman', 'Afyonkarahisar', 'Ağrı', 'Amasya', 'Ankara', 'Antalya', 'Artvin', 'Aydın', 'Balıkesir', 'Bilecik', 'Bingöl', 'Bitlis', 'Bolu', 'Burdur', 'Bursa', 'Çanakkale', 'Çankırı', 'Çorum', 'Denizli', 'Diyarbakır', 'Edirne', 'Elazığ', 'Erzincan', 'Erzurum', 'Eskişehir', 'Gaziantep', 'Giresun', 'Gümüşhane', 'Hakkari', 'Hatay', 'Isparta', 'Mersin', 'İstanbul', 'İzmir', 'Kars', 'Kastamonu', 'Kayseri', 'Kırklareli', 'Kırşehir', 'Kocaeli', 'Konya', 'Kütahya', 'Malatya', 'Manisa', 'Kahramanmaraş', 'Mardin', 'Muğla', 'Muş', 'Nevşehir', 'Niğde', 'Ordu', 'Rize', 'Sakarya', 'Samsun', 'Siirt', 'Siirt', 'Siirt', 'Sinop', 'Sivas', 'Tekirdağ', 'Tokat', 'Trabzon', 'Tunceli', 'Şanlıurfa', 'Uşak', 'Van', 'Yozgat', 'Zonguldak', 'Aksaray', 'Bayburt', 'Karaman', 'Kırıkkale', 'Batman', 'Şırnak', 'Bartın', 'Ardahan', 'Iğdır', 'Yalova', 'Karabük', 'Kilis', 'Osmaniye', 'Düzce', 'YURT DIŞI'];
 
@@ -316,7 +316,9 @@
             saveAttendance: (newRecords) => {
                 const existing = localData.getAttendance();
                 const others = existing.filter(e => !newRecords.some(n => n.personId === e.personId && n.date === e.date));
-                const merged = [...others, ...newRecords];
+                // Only merge records that have a non-empty status (filter out deletion stubs)
+                const filteredNew = newRecords.filter(n => n.status && n.status !== '');
+                const merged = [...others, ...filteredNew];
                 localStorage.setItem('ogm_attendance', JSON.stringify(merged));
                 return merged;
             }
@@ -400,7 +402,7 @@
                         personId: String(r.personId),
                         date: normalizeDate(r.date),
                         status: r.status === 'İzinli' ? 'İzin' : r.status
-                    }));
+                    })).filter(r => r.status && r.status !== '');
 
                     localData.setAttendance(formattedAtt);
                     memoryCache.attendance = formattedAtt;
@@ -534,7 +536,7 @@
             return (
                 <div className="flex flex-col xl:flex-row items-start xl:items-center gap-4 w-full">
                     <div className="flex flex-wrap gap-2 w-full xl:w-auto">
-                        <button onClick={() => handleStatusClick(AttendanceStatus.PRESENT)} className={`px-3 py-1.5 text-xs sm:text-sm border rounded-md transition-all flex-grow sm:flex-grow-0 ${(status === AttendanceStatus.PRESENT || (!status && !isWeekend)) ? 'bg-green-600 border-green-500 text-white' : 'bg-forest-900 border-forest-700 text-forest-400 hover:border-forest-500'}`}>
+                        <button onClick={() => handleStatusClick(AttendanceStatus.PRESENT)} className={`px-3 py-1.5 text-xs sm:text-sm border rounded-md transition-all flex-grow sm:flex-grow-0 ${(status === AttendanceStatus.PRESENT) ? 'bg-green-600 border-green-500 text-white' : 'bg-forest-900 border-forest-700 text-forest-400 hover:border-forest-500'}`}>
                             Mevcut
                         </button>
 
@@ -1204,26 +1206,50 @@
 
                     const currentYear = selectedHarcirahRange ? new Date(selectedHarcirahRange.start).getFullYear() : new Date().getFullYear();
 
-                    // Header
-                    worksheet.mergeCells('A1:H1');
-                    worksheet.getCell('A1').value = `${currentYear} YILI HARCIRAH GÖREV LİSTESİ`;
-                    worksheet.getCell('A1').font = { bold: true, size: 14 };
-                    worksheet.getCell('A1').alignment = { horizontal: 'center' };
+                    // Row Heights
+                    worksheet.getRow(1).height = 15;
+                    worksheet.getRow(2).height = 22.50;
 
-                    // Table Headers
+                    // Header Title (Rows 3-4 merged)
+                    worksheet.mergeCells('A1:H1');
+                    const ministryCell = worksheet.getCell('A1');
+                    ministryCell.value = 'T.C. TARIM VE ORMAN BAKANLIĞI';
+                    ministryCell.font = { bold: true, size: 11 };
+                    ministryCell.alignment = { horizontal: 'center', vertical: 'middle' };
+
+                    worksheet.mergeCells('A2:H2');
+                    const ogmCell = worksheet.getCell('A2');
+                    ogmCell.value = 'ORMAN GENEL MÜDÜRLÜĞÜ / HAVACILIK DAİRESİ BAŞKANLIĞI';
+                    ogmCell.font = { bold: true, size: 11 };
+                    ogmCell.alignment = { horizontal: 'center', vertical: 'middle' };
+
+                    worksheet.mergeCells('A3:H4');
+                    const titleCell = worksheet.getCell('A3');
+                    titleCell.value = `${currentYear} YILI HARCIRAH GÖREV LİSTESİ`;
+                    titleCell.font = { bold: true, size: 14 };
+                    titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+                    titleCell.border = { 
+                        top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } 
+                    };
+
+                    // Table Headers (Row 5)
                     const headers = ['SIRA', 'AD SOYAD', 'TC NO', 'UNVAN', 'GÖREV YERİ', 'BAŞLANGIÇ', 'BİTİŞ', 'GÜN'];
-                    worksheet.getRow(3).values = headers;
-                    worksheet.getRow(3).font = { bold: true };
-                    worksheet.getRow(3).eachCell(cell => {
+                    worksheet.getRow(5).values = headers;
+                    worksheet.getRow(5).font = { bold: true };
+                    worksheet.getRow(5).height = 20;
+                    worksheet.getRow(5).eachCell((cell, colNumber) => {
                         cell.border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
                         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9D9D9' } };
-                        cell.alignment = { horizontal: 'center' };
+                        cell.alignment = { horizontal: 'center', vertical: 'middle' };
                     });
 
                     const selectedPeople = harcirahPersonnel.filter(p => selectedHarcirahPersonnelIds.has(p.id));
-                    
+                    let lastDataRowIndex = 5;
+
                     selectedPeople.forEach((p, idx) => {
-                        const rowIndex = idx + 4;
+                        const rowIndex = idx + 6;
+                        lastDataRowIndex = rowIndex;
+                        worksheet.getRow(rowIndex).height = 18;
                         
                         const selectedDatesForPerson = Array.from(selectedHarcirahDates[p.id] || []).sort();
                         
@@ -1235,17 +1261,9 @@
                             const d2 = new Date(lastDateStr); d2.setHours(12,0,0,0);
                             
                             const countDays = selectedDatesForPerson.length;
-                            let hStart, hEnd, diffDays;
-                            
-                            if (countDays >= 7) {
-                                hStart = new Date(d1); hStart.setDate(hStart.getDate() + 1);
-                                hEnd = new Date(d2);
-                                diffDays = countDays - 1;
-                            } else {
-                                hStart = new Date(d1);
-                                hEnd = new Date(d2);
-                                diffDays = countDays;
-                            }
+                            const hStart = new Date(d1);
+                            const hEnd = new Date(d2);
+                            const diffDays = countDays;
 
                             const rowData = [
                                 idx + 1,
@@ -1259,9 +1277,9 @@
                             ];
                             
                             worksheet.getRow(rowIndex).values = rowData;
-                            worksheet.getRow(rowIndex).eachCell(cell => {
+                            worksheet.getRow(rowIndex).eachCell((cell) => {
                                 cell.border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
-                                cell.alignment = { horizontal: 'center' };
+                                cell.alignment = { horizontal: 'center', vertical: 'middle' };
                             });
                         }
                     });
@@ -1269,9 +1287,12 @@
                     // Signature Block (Rank 1 - Murat Akmeşe Logic)
                     const rank1Person = plList.find(p => p.rank === 1) || { fullName: 'Murat AKMEŞE', title: 'Kaptan Pilot' };
                     
-                    // Merge and center F, G columns, rows 8, 9, 10, 11
-                    worksheet.mergeCells('F8:G11');
-                    const sigCell = worksheet.getCell('F8');
+                    // Signature block starts 4 rows below the last data row
+                    const sigStartRow = lastDataRowIndex + 4;
+                    const sigEndRow = sigStartRow + 3; // 4 rows total
+                    
+                    worksheet.mergeCells(`F${sigStartRow}:G${sigEndRow}`);
+                    const sigCell = worksheet.getCell(`F${sigStartRow}`);
                     sigCell.value = `${rank1Person.fullName}\nKaptan Pilot\nHava Araçları Bakım ve Teknik Şube Müdürü`;
                     sigCell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
                     sigCell.font = { bold: true };
@@ -1697,13 +1718,10 @@
                                                         
                                                         let hStart = new Date(d1);
                                                         let hEnd = new Date(d2);
-                                                        if (rawDiffDays >= 7) {
-                                                            hStart.setDate(hStart.getDate() + 1);
-                                                        }
 
                                                         const startStr = hStart.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' });
                                                         const endStr = hEnd.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' });
-                                                        const displayDays = rawDiffDays >= 7 ? rawDiffDays - 1 : rawDiffDays;
+                                                        const displayDays = rawDiffDays;
 
                                                         return (
                                                             <div key={idx} className="relative group">
@@ -2640,7 +2658,7 @@
                 const isWe = dObj.getDay() === 0 || dObj.getDay() === 6;
 
                 people.forEach(p => {
-                    const r = allRecs.find(x => x.personId === p.id && x.date === referenceDate);
+                    const r = allRecs.find(x => x.personId === p.id && x.date === referenceDate && x.status && x.status !== '');
                     
                     // Check for weekend inclusion history (look at Saturday record of this specific week)
                     let hasWeekendRecord = false;
@@ -2654,7 +2672,7 @@
                          satDate.setDate(current.getDate() + diffToSat);
                          const satStr = normalizeDate(satDate);
                          
-                         const satRec = allRecs.find(x => x.personId === p.id && x.date === satStr);
+                         const satRec = allRecs.find(x => x.personId === p.id && x.date === satStr && x.status && x.status !== '');
                          // If Saturday has a record that matches criteria
                          if (satRec) {
                              if (satRec.status === AttendanceStatus.DUTY) {
@@ -2666,7 +2684,7 @@
                          }
                     }
 
-                    if (r) {
+                    if (r && r.status && r.status !== '') {
                         next[p.id] = {
                             ...r,
                             leaveType: r.leaveType || LeaveType.DAILY,
@@ -2674,7 +2692,7 @@
                             includeWeekend: hasWeekendRecord
                         };
                     } else {
-                        const hist = allRecs.filter(x => x.personId === p.id && x.date < referenceDate).sort((a, b) => b.date.localeCompare(a.date))[0];
+                        const hist = allRecs.filter(x => x.personId === p.id && x.date < referenceDate && x.status && x.status !== '').sort((a, b) => b.date.localeCompare(a.date))[0];
                         if (isWe) {
                             if (hist && hist.status === AttendanceStatus.DUTY) {
                                 next[p.id] = { status: hist.status, dutyLocation: hist.dutyLocation, dutyType: hist.dutyType || DutyType.PLANNED, includeWeekend: hasWeekendRecord };
@@ -2719,7 +2737,7 @@
                     people.forEach(p => {
                         const recordsInRange = days.map(d => {
                             const checkDate = normalizeDate(d);
-                            return allRecs.find(r => r.personId === p.id && r.date === checkDate);
+                            return allRecs.find(r => r.personId === p.id && r.date === checkDate && r.status && r.status !== '');
                         }).filter(r => !!r);
 
                         if (recordsInRange.length > 0) {
@@ -2757,7 +2775,23 @@
                         if (personsToSkip.has(p.id)) return; // Skip blurred rows
 
                         const s = att[p.id];
+                        
+                        if (s?.status === undefined) {
+                            const existingRec = allRecs.find(r => r.personId === p.id && r.date === dStr);
+                            if (existingRec) {
+                                counter++;
+                                recs.push({
+                                    ...existingRec,
+                                    status: '' // Empty status signals deletion to backend
+                                });
+                            }
+                            return;
+                        }
+
                         if (!s?.status) return;
+
+                        // Background data cleanup: If weekend and weekly mode, skip saving unless explicitly included
+                        if (isWeekend && isWeeklyMode && !s.includeWeekend) return;
 
                         const dType = s.dutyType || DutyType.PLANNED;
                         
@@ -2771,18 +2805,18 @@
                         if (isFriday) {
                              // If user is NOT selecting "Include Weekend", but there might be existing weekend records
                              // Or if status changed away from Duty/FMI
-                             // We should check and overwrite weekend with PRESENT (default reset)
+                             // We should check and remove them by sending empty status
                              
                              // Calculate Sat/Sun dates
                              const satDate = new Date(dateObj); satDate.setDate(satDate.getDate() + 1); const satStr = normalizeDate(satDate);
                              const sunDate = new Date(dateObj); sunDate.setDate(sunDate.getDate() + 2); const sunStr = normalizeDate(sunDate);
                              
-                             // Check if existing records have FMI or Planned Duty
-                             const existingSat = allRecs.find(r => r.personId === p.id && r.date === satStr);
-                             const existingSun = allRecs.find(r => r.personId === p.id && r.date === sunStr);
+                             // Check if existing records have ANY status
+                             const existingSat = allRecs.find(r => r.personId === p.id && r.date === satStr && r.status && r.status !== '');
+                             const existingSun = allRecs.find(r => r.personId === p.id && r.date === sunStr && r.status && r.status !== '');
                              
-                             const hasWeekendJunk = (existingSat && (existingSat.status === AttendanceStatus.DUTY || (existingSat.status === AttendanceStatus.LEAVE && existingSat.leaveType === LeaveType.OVERTIME))) ||
-                                                    (existingSun && (existingSun.status === AttendanceStatus.DUTY || (existingSun.status === AttendanceStatus.LEAVE && existingSun.leaveType === LeaveType.OVERTIME)));
+                             const hasWeekendJunk = (existingSat && existingSat.status && existingSat.status !== '') || 
+                                                    (existingSun && existingSun.status && existingSun.status !== '');
 
                              if (hasWeekendJunk && (!shouldIncludeWeekend || !s.includeWeekend)) {
                                  // Add cleanup records
@@ -2791,7 +2825,7 @@
                                     id: `${timestamp}-${counter}-cleanup-sat-${p.id}`,
                                     date: satStr,
                                     personId: p.id,
-                                    status: AttendanceStatus.PRESENT, // Reset to Present
+                                    status: '', // Reset to HT (Delete record)
                                     aircraftTypeSnapshot: selModel || undefined
                                  });
                                  counter++;
@@ -2799,7 +2833,7 @@
                                     id: `${timestamp}-${counter}-cleanup-sun-${p.id}`,
                                     date: sunStr,
                                     personId: p.id,
-                                    status: AttendanceStatus.PRESENT, // Reset to Present
+                                    status: '', // Reset to HT (Delete record)
                                     aircraftTypeSnapshot: selModel || undefined
                                  });
                              }
@@ -2955,7 +2989,7 @@
 
                 days.forEach(d => {
                     const dStr = normalizeDate(d);
-                    const r = allRecs.find(rec => rec.personId === person.id && rec.date === dStr);
+                    const r = allRecs.find(rec => rec.personId === person.id && rec.date === dStr && rec.status && rec.status !== '');
                     const isWe = d.getDay() === 0 || d.getDay() === 6;
 
                     if (r) {
@@ -2963,7 +2997,7 @@
                     } else {
                         const prevDate = new Date(d); prevDate.setDate(prevDate.getDate() - 1);
                         const prevStr = normalizeDate(prevDate);
-                        const prevRec = initialStates[prevStr] || allRecs.find(rec => rec.personId === person.id && rec.date === prevStr);
+                        const prevRec = initialStates[prevStr] || allRecs.find(rec => rec.personId === person.id && rec.date === prevStr && rec.status && rec.status !== '');
 
                         if (isWe) {
                             if (prevRec && prevRec.status === AttendanceStatus.DUTY) {
@@ -3046,21 +3080,31 @@
                 
                 Object.keys(detailDays).forEach(dStr => {
                     const s = detailDays[dStr];
-                    if (s.status) {
-                        counter++;
-                        recs.push({
-                            id: `${timestamp}-${counter}-${detailPerson.id}`,
-                            date: dStr,
-                            personId: detailPerson.id,
-                            status: s.status,
-                            dutyLocation: s.dutyLocation,
-                            leaveType: s.leaveType,
-                            note: s.note,
-                            dutyType: s.dutyType,
-                            includeWeekend: !!s.includeWeekend,
-                            aircraftTypeSnapshot: selModel || undefined
-                        });
+                    if (s.status === undefined) {
+                        const existingRec = allRecs.find(r => r.personId === detailPerson.id && r.date === dStr);
+                        if (existingRec) {
+                            counter++;
+                            recs.push({
+                                ...existingRec,
+                                status: '' 
+                            });
+                        }
+                        return;
                     }
+
+                    counter++;
+                    recs.push({
+                        id: `${timestamp}-${counter}-${detailPerson.id}`,
+                        date: dStr,
+                        personId: detailPerson.id,
+                        status: s.status,
+                        dutyLocation: s.dutyLocation,
+                        leaveType: s.leaveType,
+                        note: s.note,
+                        dutyType: s.dutyType,
+                        includeWeekend: !!s.includeWeekend,
+                        aircraftTypeSnapshot: selModel || undefined
+                    });
                 });
 
                 try {
@@ -3339,7 +3383,10 @@
                 let shouldBlur = false;
                 if (isWeeklyMode) {
                     const dInR = getDaysInRange(rangeStartDate, rangeEndDate);
-                    const rInR = dInR.map(d => { const dStr = normalizeDate(d); return allRecs.find(r => r.personId === p.id && r.date === dStr); }).filter(r => !!r);
+                    const rInR = dInR.map(d => { 
+                        const dStr = normalizeDate(d); 
+                        return allRecs.find(r => r.personId === p.id && r.date === dStr && r.status && r.status !== ''); 
+                    }).filter(r => !!r);
                     if (rInR.length > 0) { if (rInR.length < dInR.length) shouldBlur = true; else { const fR = rInR[0]; if (!rInR.every(r => r.status === fR.status && (r.dutyType || DutyType.PLANNED) === (fR.dutyType || DutyType.PLANNED) && r.dutyLocation === fR.dutyLocation && r.leaveType === fR.leaveType)) shouldBlur = true; } }
                 }
                 return (
@@ -3589,9 +3636,6 @@
                 </div>
             );
         };
-
-        const handleStatusChangeWithAuth = (pid, status) => {};
-        const handleDetailChangeWithAuth = (pid, field, value) => {};
 
         const Login = ({ onLogin }) => {
             const [u, setU] = useState(''); const [p, setP] = useState('');
