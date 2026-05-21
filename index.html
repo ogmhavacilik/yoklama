@@ -142,7 +142,7 @@
 
         const YONETIM_NAMES = ["MEHMET SEFA YÜCEDAĞ", "TEZCAN GÜZER", "ALPER ÖZMETİN" ,"MURAT AKMEŞE"];
 
-        const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzjgsoveqIQS4iLXDBYJrIuYX5yryjj1AKVdejNPCrzL1lSx0EYAEX2ZhcE94uDLpuc/exec"; 
+        const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwUTdTLEyfG6UPju6to69MidwnQ_QRPzWlrqbOHcnMTvRwnTICz9IV4I_ME7DYvbp5J/exec"; 
 
         const CITIES = ['Adana', 'Adıyaman', 'Afyonkarahisar', 'Ağrı', 'Amasya', 'Ankara', 'Antalya', 'Artvin', 'Aydın', 'Balıkesir', 'Bilecik', 'Bingöl', 'Bitlis', 'Bolu', 'Burdur', 'Bursa', 'Çanakkale', 'Çankırı', 'Çorum', 'Denizli', 'Diyarbakır', 'Edirne', 'Elazığ', 'Erzincan', 'Erzurum', 'Eskişehir', 'Gaziantep', 'Giresun', 'Gümüşhane', 'Hakkari', 'Hatay', 'Isparta', 'Mersin', 'İstanbul', 'İzmir', 'Kars', 'Kastamonu', 'Kayseri', 'Kırklareli', 'Kırşehir', 'Kocaeli', 'Konya', 'Kütahya', 'Malatya', 'Manisa', 'Kahramanmaraş', 'Mardin', 'Muğla', 'Muş', 'Nevşehir', 'Niğde', 'Ordu', 'Rize', 'Sakarya', 'Samsun', 'Siirt', 'Siirt', 'Siirt', 'Sinop', 'Sivas', 'Tekirdağ', 'Tokat', 'Trabzon', 'Tunceli', 'Şanlıurfa', 'Uşak', 'Van', 'Yozgat', 'Zonguldak', 'Aksaray', 'Bayburt', 'Karaman', 'Kırıkkale', 'Batman', 'Şırnak', 'Bartın', 'Ardahan', 'Iğdır', 'Yalova', 'Karabük', 'Kilis', 'Osmaniye', 'Düzce', 'YURT DIŞI'];
 
@@ -460,6 +460,20 @@
                     return null;
                 } catch(e) {
                     return null;
+                }
+            },
+            checkExternalOvertime: async () => {
+                try {
+                    return await apiCall('check_external_overtime');
+                } catch(e) {
+                    return { count: 0 };
+                }
+            },
+            syncExternalOvertime: async (filterIds = null) => {
+                try {
+                    return await apiCall('sync_external_overtime', { filterIds });
+                } catch(e) {
+                    throw e;
                 }
             },
             initBackgroundCaching: async (personnelList) => {
@@ -2388,6 +2402,14 @@
             const [unlockPassword, setUnlockPassword] = useState('');
             const [pendingAction, setPendingAction] = useState(null);
 
+            // External Overtime Sync
+            const [syncOvertimeCount, setSyncOvertimeCount] = useState(0);
+            const [syncOvertimeRecords, setSyncOvertimeRecords] = useState([]);
+            const [skippedRecordIds, setSkippedRecordIds] = useState(new Set());
+            const [showSyncModal, setShowSyncModal] = useState(false);
+            const [showSyncDetails, setShowSyncDetails] = useState(false);
+            const [isSyncing, setIsSyncing] = useState(false);
+
             // Data Load
             const loadDashboardData = useCallback(async () => {
                 const [ac, pl, [recs, syncedPl]] = await Promise.all([
@@ -2504,6 +2526,23 @@
                 }
             }, []);
 
+            const handleUnitSelection = async (unit) => {
+                setSelModel(unit);
+                if (unit === AircraftModel.TEKNIK_EKIP || unit === AircraftModel.YER_DESTEK) {
+                    try {
+                        const res = await storageService.checkExternalOvertime();
+                        if (res && res.count > 0) {
+                            setSyncOvertimeCount(res.count);
+                            setSyncOvertimeRecords(res.records || []);
+                            setSkippedRecordIds(new Set());
+                            setShowSyncModal(true);
+                        }
+                    } catch (e) {
+                        console.warn("External sync check failed", e);
+                    }
+                }
+            };
+
             useEffect(() => {
                 setLoading(true);
                 storageService.preload()
@@ -2527,6 +2566,33 @@
                     console.error(e);
                     setSelModel(null);
                 } finally {
+                    setLoading(false);
+                }
+            };
+
+            const handleSyncOvertime = async () => {
+                setIsSyncing(true);
+                try {
+                    const recordsToSync = syncOvertimeRecords.filter(r => !skippedRecordIds.has(r.id));
+                    if (recordsToSync.length === 0) {
+                        setShowSyncModal(false);
+                        return;
+                    }
+                    // We need a specific call or internal logic to sync ONLY selective ones
+                    // Since komut.gs sync_external_overtime syncs ALL, I might need a new action or update the existing one
+                    // But for now, if they want to skip, let's just sync all and they can revert? 
+                    // No, better to update komut.gs to accept a list of IDs to sync.
+                    
+                    const res = await storageService.syncExternalOvertime(recordsToSync.map(r => r.id));
+                    alert(`${res.imported} adet veri başarıyla aktarıldı.`);
+                    setShowSyncModal(false);
+                    setLoading(true);
+                    await storageService.refresh();
+                    await loadDashboardData();
+                } catch (e) {
+                    alert("Aktarım sırasında hata oluştu: " + e.message);
+                } finally {
+                    setIsSyncing(false);
                     setLoading(false);
                 }
             };
@@ -2930,7 +2996,9 @@
                         status, 
                         dutyType: status === AttendanceStatus.DUTY ? (prev[pid]?.dutyType || DutyType.PLANNED) : undefined,
                         dutyLocation: (status === AttendanceStatus.DUTY || status === AttendanceStatus.COURSE) ? (prev[pid]?.dutyLocation || '') : undefined,
-                        includeWeekend: status === AttendanceStatus.DUTY ? true : (prev[pid]?.includeWeekend || false)
+                        includeWeekend: status === AttendanceStatus.DUTY ? true : (prev[pid]?.includeWeekend || false),
+                        note: status === AttendanceStatus.OTHER ? prev[pid]?.note : undefined,
+                        leaveType: status === AttendanceStatus.LEAVE ? (prev[pid]?.leaveType || LeaveType.DAILY) : undefined
                     } 
                 }));
             };
@@ -3049,7 +3117,8 @@
                             dutyLocation: (status === AttendanceStatus.DUTY || status === AttendanceStatus.COURSE) ? (prev[dateStr]?.dutyLocation || '') : undefined,
                             dutyType: status === AttendanceStatus.DUTY ? (prev[dateStr]?.dutyType || DutyType.PLANNED) : undefined,
                             leaveType: status === AttendanceStatus.LEAVE ? (prev[dateStr]?.leaveType || LeaveType.DAILY) : undefined,
-                            includeWeekend: status === AttendanceStatus.DUTY ? true : (prev[dateStr]?.includeWeekend || false)
+                            includeWeekend: status === AttendanceStatus.DUTY ? true : (prev[dateStr]?.includeWeekend || false),
+                            note: status === AttendanceStatus.OTHER ? prev[dateStr]?.note : undefined
                         }
                     };
 
@@ -3453,7 +3522,7 @@
                     <h1 className="text-3xl font-bold text-white mb-4">Yoklama Takip</h1>
                     <Card title="Birim Seçiniz">
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                             <button onClick={() => setSelModel('YÖNETİM')} className={`p-6 rounded border-2 font-bold flex flex-col items-center transition-all group relative overflow-hidden ${!dashboardStatus['YÖNETİM']?.missing ? 'bg-teal-600 border-teal-400 hover:bg-teal-500 text-white' : 'bg-forest-800 border-forest-600 hover:bg-forest-700 text-white'}`}>
+                             <button onClick={() => handleUnitSelection('YÖNETİM')} className={`p-6 rounded border-2 font-bold flex flex-col items-center transition-all group relative overflow-hidden ${!dashboardStatus['YÖNETİM']?.missing ? 'bg-teal-600 border-teal-400 hover:bg-teal-500 text-white' : 'bg-forest-800 border-forest-600 hover:bg-forest-700 text-white'}`}>
                                 <Users className="mb-2" /> YÖNETİM
                                 {dashboardStatus['YÖNETİM']?.missing && <span className="text-[10px] bg-red-600 px-2 py-0.5 rounded mt-2 animate-pulse w-full block">YOKLAMA GİRİLMEDİ</span>}
                             </button>
@@ -3461,7 +3530,7 @@
                                 const stat = dashboardStatus[m] || { pilotMissing: false, techMissing: false, groundMissing: false };
                                 const hasIssue = stat.pilotMissing || stat.techMissing || stat.groundMissing;
                                 return (
-                                <button key={m} onClick={() => setSelModel(m)} className={`p-6 rounded border-2 font-bold flex flex-col items-center transition-all group relative overflow-hidden ${!hasIssue ? 'bg-teal-600 border-teal-400 hover:bg-teal-500 text-white' : 'bg-forest-800 border-forest-600 hover:bg-forest-700 text-white'}`}>
+                                <button key={m} onClick={() => handleUnitSelection(m)} className={`p-6 rounded border-2 font-bold flex flex-col items-center transition-all group relative overflow-hidden ${!hasIssue ? 'bg-teal-600 border-teal-400 hover:bg-teal-500 text-white' : 'bg-forest-800 border-forest-600 hover:bg-forest-700 text-white'}`}>
                                     <ModelIcon category={inv.find(a => a.model === m)?.category} model={m} className="mb-2" /> {m}
                                     {stat.groundMissing && <span className="text-[10px] bg-red-600 px-2 py-0.5 rounded mt-2 animate-pulse w-full block">YOKLAMA GİRİLMEDİ</span>}
                                     {stat.pilotMissing && <span className="text-[10px] bg-orange-600 px-2 py-0.5 rounded mt-1 animate-pulse w-full block">PİLOT GİRİLMEDİ</span>}
@@ -3590,6 +3659,89 @@
                   
                     <div className="sticky bottom-0 bg-forest-950 p-4 border-t border-forest-700 flex justify-center mt-4"><Button size="lg" onClick={save} className="w-full max-w-md">KAYDET</Button></div>
                     <div className="h-20" />
+                    
+                    {showSyncModal && (
+                        <div className="fixed inset-0 bg-black/70 z-[100] flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in">
+                            <div className={`bg-forest-900 border border-forest-500 p-8 rounded-2xl ${showSyncDetails ? 'max-w-2xl' : 'max-w-md'} w-full shadow-2xl transition-all duration-300`}>
+                                <div className="text-center">
+                                    <div className="w-20 h-20 bg-forest-800 rounded-full flex items-center justify-center mx-auto mb-6 border-2 border-forest-400">
+                                        <LucideIcons.RefreshCw size={40} className={`text-forest-400 ${isSyncing ? 'animate-spin' : ''}`} />
+                                    </div>
+                                    <h3 className="text-2xl font-bold text-white mb-2">Fazla Mesai Aktarımı</h3>
+                                    <p className="text-forest-200 mb-6 leading-relaxed">
+                                        Fazla mesai sisteminde onaylanmış <span className="font-bold text-forest-400">{syncOvertimeCount}</span> adet veri bulundu. 
+                                        Bu veriler yoklama sistemine aktarılsın mı?
+                                    </p>
+                                </div>
+
+                                {showSyncDetails && (
+                                    <div className="bg-forest-950 border border-forest-800 rounded-lg p-4 mb-6 max-h-60 overflow-y-auto text-left">
+                                        <table className="w-full text-xs text-forest-200">
+                                            <thead className="border-b border-forest-800 text-forest-400 uppercase font-bold text-[10px]">
+                                                <tr>
+                                                    <th className="py-2 text-left w-8"></th>
+                                                    <th className="py-2 text-left">Personel</th>
+                                                    <th className="py-2 text-left">Tarih</th>
+                                                    <th className="py-2 text-left">Durum</th>
+                                                    <th className="py-2 text-left">Not</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {syncOvertimeRecords.map((r, idx) => {
+                                                    const person = allPersonnel.find(p => {
+                                                        const pid = String(p.id).toLowerCase().trim();
+                                                        const rid = String(r.personId).toLowerCase().trim();
+                                                        return pid === rid || (p.tcNo && String(p.tcNo).trim() === rid);
+                                                    });
+                                                    const isSkipped = skippedRecordIds.has(r.id);
+                                                    const displayName = person ? person.fullName : (r.personName || (r.personId ? `ID: ${r.personId}` : 'Bilinmeyen'));
+                                                    return (
+                                                        <tr key={idx} className={`border-b border-forest-900/50 hover:bg-forest-900/40 ${isSkipped ? 'opacity-40 grayscale' : ''}`}>
+                                                            <td className="py-2">
+                                                                <input 
+                                                                    type="checkbox" 
+                                                                    checked={!isSkipped} 
+                                                                    onChange={() => {
+                                                                        const newSkipped = new Set(skippedRecordIds);
+                                                                        if (isSkipped) newSkipped.delete(r.id);
+                                                                        else newSkipped.add(r.id);
+                                                                        setSkippedRecordIds(newSkipped);
+                                                                    }} 
+                                                                    className="w-4 h-4 rounded border-forest-600 bg-forest-800 text-forest-500 focus:ring-forest-500"
+                                                                />
+                                                            </td>
+                                                            <td className="py-2 font-medium text-white">{displayName}</td>
+                                                            <td className="py-2">{r.date ? new Date(r.date.replace(/-/g, '/')).toLocaleDateString('tr-TR') : '-'}</td>
+                                                            <td className="py-2 text-[11px] leading-tight text-forest-100">{r.status} {r.leaveType ? `(${r.leaveType})` : ''}</td>
+                                                            <td className="py-2 max-w-[120px] truncate">{r.note}</td>
+                                                        </tr>
+                                                    );
+                                                })}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                )}
+
+                                <div className="flex flex-col gap-3">
+                                    <div className="flex gap-4">
+                                        <Button variant="secondary" onClick={() => setShowSyncModal(false)} className="flex-1" disabled={isSyncing}>
+                                            Daha Sonra
+                                        </Button>
+                                        <Button variant="primary" onClick={handleSyncOvertime} className="flex-1" disabled={isSyncing}>
+                                            {isSyncing ? 'Aktarılıyor...' : 'Evet, Aktar'}
+                                        </Button>
+                                    </div>
+                                    <button 
+                                        onClick={() => setShowSyncDetails(!showSyncDetails)}
+                                        className="text-xs text-forest-400 hover:text-white transition-colors underline underline-offset-4"
+                                    >
+                                        {showSyncDetails ? 'Detayları Gizle' : 'Detayları İncele'}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
                     {detailModalOpen && detailPerson && (
                         <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4 overflow-auto">
                             <div className="bg-forest-900 border border-forest-600 w-full max-w-4xl rounded-lg shadow-2xl flex flex-col max-h-[90vh]">
