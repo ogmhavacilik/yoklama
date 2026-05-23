@@ -1170,6 +1170,7 @@
                         .filter(r => 
                             unitPersonIds.has(r.personId) &&
                             r.status === AttendanceStatus.DUTY && 
+                            r.dutyLocation && r.dutyLocation.trim().toLocaleUpperCase('tr-TR') === selectedHarcirahCity.trim().toLocaleUpperCase('tr-TR') &&
                             r.date >= range.start &&
                             r.date <= range.end
                         )
@@ -1187,6 +1188,7 @@
                             .filter(r => 
                                 r.personId === p.id && 
                                 r.status === AttendanceStatus.DUTY && 
+                                r.dutyLocation && r.dutyLocation.trim().toLocaleUpperCase('tr-TR') === selectedHarcirahCity.trim().toLocaleUpperCase('tr-TR') &&
                                 r.date >= range.start && 
                                 r.date <= range.end
                             )
@@ -1220,48 +1222,33 @@
 
                     const currentYear = selectedHarcirahRange ? new Date(selectedHarcirahRange.start).getFullYear() : new Date().getFullYear();
 
-                    // Row Heights
-                    worksheet.getRow(1).height = 15;
-                    worksheet.getRow(2).height = 22.50;
+                    // Row Heights & Spacing
+                    worksheet.getRow(1).height = 30;
+                    worksheet.getRow(2).height = 15;
 
-                    // Header Title (Rows 3-4 merged)
+                    // Header Title (Row 1 centered, Row 2 blank, no unnecessary ministry text)
                     worksheet.mergeCells('A1:H1');
-                    const ministryCell = worksheet.getCell('A1');
-                    ministryCell.value = 'T.C. TARIM VE ORMAN BAKANLIĞI';
-                    ministryCell.font = { bold: true, size: 11 };
-                    ministryCell.alignment = { horizontal: 'center', vertical: 'middle' };
-
-                    worksheet.mergeCells('A2:H2');
-                    const ogmCell = worksheet.getCell('A2');
-                    ogmCell.value = 'ORMAN GENEL MÜDÜRLÜĞÜ / HAVACILIK DAİRESİ BAŞKANLIĞI';
-                    ogmCell.font = { bold: true, size: 11 };
-                    ogmCell.alignment = { horizontal: 'center', vertical: 'middle' };
-
-                    worksheet.mergeCells('A3:H4');
-                    const titleCell = worksheet.getCell('A3');
+                    const titleCell = worksheet.getCell('A1');
                     titleCell.value = `${currentYear} YILI HARCIRAH GÖREV LİSTESİ`;
                     titleCell.font = { bold: true, size: 14 };
                     titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
-                    titleCell.border = { 
-                        top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } 
-                    };
 
-                    // Table Headers (Row 5)
+                    // Table Headers (Row 3)
                     const headers = ['SIRA', 'AD SOYAD', 'TC NO', 'UNVAN', 'GÖREV YERİ', 'BAŞLANGIÇ', 'BİTİŞ', 'GÜN'];
-                    worksheet.getRow(5).values = headers;
-                    worksheet.getRow(5).font = { bold: true };
-                    worksheet.getRow(5).height = 20;
-                    worksheet.getRow(5).eachCell((cell, colNumber) => {
+                    worksheet.getRow(3).values = headers;
+                    worksheet.getRow(3).font = { bold: true };
+                    worksheet.getRow(3).height = 20;
+                    worksheet.getRow(3).eachCell((cell, colNumber) => {
                         cell.border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
                         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9D9D9' } };
                         cell.alignment = { horizontal: 'center', vertical: 'middle' };
                     });
 
                     const selectedPeople = harcirahPersonnel.filter(p => selectedHarcirahPersonnelIds.has(p.id));
-                    let lastDataRowIndex = 5;
+                    let lastDataRowIndex = 3;
 
                     selectedPeople.forEach((p, idx) => {
-                        const rowIndex = idx + 6;
+                        const rowIndex = idx + 4;
                         lastDataRowIndex = rowIndex;
                         worksheet.getRow(rowIndex).height = 18;
                         
