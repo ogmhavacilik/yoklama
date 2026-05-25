@@ -2240,18 +2240,48 @@
                 );
             };
 
+            const resolvePersonStatus = (p, dateStr, attendanceList) => {
+                const r = attendanceList.find(a => a.personId === p.id && a.date === dateStr && a.status && a.status !== '');
+                if (r) return r;
+                
+                const dObj = new Date(dateStr + 'T12:00:00');
+                const isWe = dObj.getDay() === 0 || dObj.getDay() === 6;
+                const hist = attendanceList
+                    .filter(x => x.personId === p.id && x.date < dateStr && x.status && x.status !== '')
+                    .sort((a, b) => b.date.localeCompare(a.date))[0];
+                
+                if (isWe) {
+                    if (hist && hist.status === AttendanceStatus.DUTY) {
+                        return { status: hist.status, dutyLocation: hist.dutyLocation, dutyType: hist.dutyType || DutyType.PLANNED };
+                    }
+                    return { status: undefined };
+                } else {
+                    if (hist) {
+                        const carryOverStatuses = [AttendanceStatus.PRESENT, AttendanceStatus.DUTY];
+                        if (carryOverStatuses.includes(hist.status)) {
+                            return {
+                                ...hist,
+                                leaveType: hist.leaveType || LeaveType.DAILY,
+                                dutyType: hist.dutyType || DutyType.PLANNED
+                            };
+                        } else {
+                            return { status: AttendanceStatus.PRESENT };
+                        }
+                    } else {
+                        return { status: AttendanceStatus.PRESENT };
+                    }
+                }
+            };
+
             if (type === 'MESAI') {
                 const mesaiList = filteredPersonnel.filter(p => {
-                    const r = attendance.find(a => a.personId === p.id && a.date === today);
-                    if (isTodayWeekend) {
-                        return r?.status === AttendanceStatus.PRESENT;
-                    }
-                    return !r || !r.status || r.status === AttendanceStatus.PRESENT;
+                    const resolved = resolvePersonStatus(p, today, attendance);
+                    return resolved?.status === AttendanceStatus.PRESENT;
                 }).sort((a, b) => (a.rank || 999) - (b.rank || 999));
 
                 const beklemeList = filteredPersonnel.filter(p => {
-                    const r = attendance.find(a => a.personId === p.id && a.date === today);
-                    return r?.status === AttendanceStatus.OTHER && r?.note?.toLocaleUpperCase('tr-TR').includes('BEKLEME');
+                    const resolved = resolvePersonStatus(p, today, attendance);
+                    return resolved?.status === AttendanceStatus.OTHER && resolved?.note?.toLocaleUpperCase('tr-TR').includes('BEKLEME');
                 }).sort((a, b) => (a.rank || 999) - (b.rank || 999));
 
                 const filteredMesai = mesaiList.filter(p => !beklemeList.find(b => b.id === p.id));
@@ -2280,8 +2310,13 @@
             }
 
             if (type === 'GÖREV') {
-                const dutyRecs = attendance.filter(a => a.date === today && a.status === AttendanceStatus.DUTY);
-                const locations = [...new Set(dutyRecs.map(r => (r.dutyLocation || 'BELİRSİZ').toLocaleUpperCase('tr-TR')))].sort();
+                const resolvedPersonnel = filteredPersonnel.map(p => {
+                    const resolved = resolvePersonStatus(p, today, attendance);
+                    return { p, resolved };
+                });
+
+                const dutyPeople = resolvedPersonnel.filter(item => item.resolved?.status === AttendanceStatus.DUTY);
+                const locations = [...new Set(dutyPeople.map(item => (item.resolved?.dutyLocation || 'BELİRSİZ').toLocaleUpperCase('tr-TR')))].sort();
 
                 return (
                     <div className="fixed inset-0 bg-forest-950/98 z-[200] overflow-y-auto p-4 md:p-8 md:px-12 animate-fade-in backdrop-blur-xl flex flex-col">
@@ -2295,7 +2330,10 @@
                             ) : (
                                 <div className="flex flex-col sm:flex-row sm:flex-nowrap sm:overflow-x-auto gap-4 sm:gap-8 pb-12 pt-2 scrollbar-thin scrollbar-thumb-orange-600 scrollbar-track-forest-900 pr-0 sm:pr-12 min-h-fit sm:min-h-[calc(100vh-250px)]">
                                     {locations.map(loc => {
-                                        const peopleInLoc = filteredPersonnel.filter(p => dutyRecs.some(r => r.personId === p.id && (r.dutyLocation || 'BELİRSİZ').toLocaleUpperCase('tr-TR') === loc));
+                                        const peopleInLoc = dutyPeople
+                                            .filter(item => (item.resolved?.dutyLocation || 'BELİRSİZ').toLocaleUpperCase('tr-TR') === loc)
+                                            .map(item => item.p)
+                                            .sort((a, b) => (a.rank || 999) - (b.rank || 999));
                                         
                                         return (
                                             <div key={loc} className="bg-forest-900/40 p-4 sm:p-6 rounded-2xl border border-forest-700/50 shadow-2xl w-full sm:min-w-[280px] sm:max-w-[400px] flex-shrink-0 h-fit hover:border-orange-500/30 transition-all duration-300">
@@ -2315,8 +2353,8 @@
 
             if (type === 'FMİ') {
                 const fmiPeople = filteredPersonnel.filter(p => {
-                    const r = attendance.find(a => a.personId === p.id && a.date === today);
-                    return r?.status === AttendanceStatus.LEAVE && r?.leaveType === LeaveType.OVERTIME;
+                    const resolved = resolvePersonStatus(p, today, attendance);
+                    return resolved?.status === AttendanceStatus.LEAVE && resolved?.leaveType === LeaveType.OVERTIME;
                 }).sort((a, b) => (a.rank || 999) - (b.rank || 999));
 
                 return (
