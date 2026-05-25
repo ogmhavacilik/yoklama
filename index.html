@@ -142,7 +142,7 @@
 
         const YONETIM_NAMES = ["MEHMET SEFA YÜCEDAĞ", "TEZCAN GÜZER", "ALPER ÖZMETİN" ,"MURAT AKMEŞE"];
 
-        const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwUTdTLEyfG6UPju6to69MidwnQ_QRPzWlrqbOHcnMTvRwnTICz9IV4I_ME7DYvbp5J/exec"; 
+        const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbytVmnCY7Spjg-Rges0k-BgEJqZSM8iNJoXu0UHuKFeubm4vlSzemzzVec4UgUQ96Q7/exec"; 
 
         const CITIES = ['Adana', 'Adıyaman', 'Afyonkarahisar', 'Ağrı', 'Amasya', 'Ankara', 'Antalya', 'Artvin', 'Aydın', 'Balıkesir', 'Bilecik', 'Bingöl', 'Bitlis', 'Bolu', 'Burdur', 'Bursa', 'Çanakkale', 'Çankırı', 'Çorum', 'Denizli', 'Diyarbakır', 'Edirne', 'Elazığ', 'Erzincan', 'Erzurum', 'Eskişehir', 'Gaziantep', 'Giresun', 'Gümüşhane', 'Hakkari', 'Hatay', 'Isparta', 'Mersin', 'İstanbul', 'İzmir', 'Kars', 'Kastamonu', 'Kayseri', 'Kırklareli', 'Kırşehir', 'Kocaeli', 'Konya', 'Kütahya', 'Malatya', 'Manisa', 'Kahramanmaraş', 'Mardin', 'Muğla', 'Muş', 'Nevşehir', 'Niğde', 'Ordu', 'Rize', 'Sakarya', 'Samsun', 'Siirt', 'Siirt', 'Siirt', 'Sinop', 'Sivas', 'Tekirdağ', 'Tokat', 'Trabzon', 'Tunceli', 'Şanlıurfa', 'Uşak', 'Van', 'Yozgat', 'Zonguldak', 'Aksaray', 'Bayburt', 'Karaman', 'Kırıkkale', 'Batman', 'Şırnak', 'Bartın', 'Ardahan', 'Iğdır', 'Yalova', 'Karabük', 'Kilis', 'Osmaniye', 'Düzce', 'YURT DIŞI'];
 
@@ -275,9 +275,26 @@
                 return `${year}-${month}-${day}`;
             }
             if (typeof d === 'string') {
-                if (d.includes('T')) return d.split('T')[0];
-                if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
-                if (d.length >= 10) return d.substring(0, 10);
+                const cleaned = d.trim();
+                if (cleaned.includes('T')) return cleaned.split('T')[0];
+                if (/^\d{4}-\d{2}-\d{2}$/.test(cleaned)) return cleaned;
+                
+                const partsDot = cleaned.split('.');
+                if (partsDot.length === 3 && partsDot[2].length === 4) {
+                    const day = partsDot[0].padStart(2, '0');
+                    const month = partsDot[1].padStart(2, '0');
+                    const year = partsDot[2];
+                    return `${year}-${month}-${day}`;
+                }
+                const partsSlash = cleaned.split('/');
+                if (partsSlash.length === 3 && partsSlash[2].length === 4) {
+                    const day = partsSlash[0].padStart(2, '0');
+                    const month = partsSlash[1].padStart(2, '0');
+                    const year = partsSlash[2];
+                    return `${year}-${month}-${day}`;
+                }
+                
+                if (cleaned.length >= 10) return cleaned.substring(0, 10);
             }
             return '';
         };
@@ -2251,9 +2268,6 @@
                     .sort((a, b) => b.date.localeCompare(a.date))[0];
                 
                 if (isWe) {
-                    if (hist && hist.status === AttendanceStatus.DUTY) {
-                        return { status: hist.status, dutyLocation: hist.dutyLocation, dutyType: hist.dutyType || DutyType.PLANNED };
-                    }
                     return { status: undefined };
                 } else {
                     if (hist) {
@@ -2785,11 +2799,7 @@
                     } else {
                         const hist = allRecs.filter(x => x.personId === p.id && x.date < referenceDate && x.status && x.status !== '').sort((a, b) => b.date.localeCompare(a.date))[0];
                         if (isWe) {
-                            if (hist && hist.status === AttendanceStatus.DUTY) {
-                                next[p.id] = { status: hist.status, dutyLocation: hist.dutyLocation, dutyType: hist.dutyType || DutyType.PLANNED, includeWeekend: hasWeekendRecord };
-                            } else {
-                                next[p.id] = { status: undefined };
-                            }
+                            next[p.id] = { status: undefined };
                         } else {
                             if (hist && referenceDate >= getTodayString()) {
                                 // KRİTİK DÜZELTME: İzin, Rapor gibi durumların sonsuza kadar taşınmasını engelle
@@ -2867,7 +2877,7 @@
 
                         const s = att[p.id];
                         
-                        if (s?.status === undefined) {
+                        if (s?.status === undefined || s?.status === '') {
                             const existingRec = allRecs.find(r => r.personId === p.id && r.date === dStr);
                             if (existingRec) {
                                 counter++;
@@ -3093,11 +3103,7 @@
                         const prevRec = initialStates[prevStr] || allRecs.find(rec => rec.personId === person.id && rec.date === prevStr && rec.status && rec.status !== '');
 
                         if (isWe) {
-                            if (prevRec && prevRec.status === AttendanceStatus.DUTY) {
-                                initialStates[dStr] = { ...prevRec, id: undefined };
-                            } else {
-                                initialStates[dStr] = { status: undefined };
-                            }
+                            initialStates[dStr] = { status: undefined };
                         } else {
                             if (prevRec) initialStates[dStr] = { ...prevRec, id: undefined };
                             else initialStates[dStr] = { status: AttendanceStatus.PRESENT };
@@ -3174,7 +3180,7 @@
                 
                 Object.keys(detailDays).forEach(dStr => {
                     const s = detailDays[dStr];
-                    if (s.status === undefined) {
+                    if (s.status === undefined || s.status === '') {
                         const existingRec = allRecs.find(r => r.personId === detailPerson.id && r.date === dStr);
                         if (existingRec) {
                             counter++;
