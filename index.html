@@ -142,7 +142,7 @@
 
         const YONETIM_NAMES = ["MEHMET SEFA YÜCEDAĞ", "TEZCAN GÜZER", "ALPER ÖZMETİN" ,"MURAT AKMEŞE"];
 
-        const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbytVmnCY7Spjg-Rges0k-BgEJqZSM8iNJoXu0UHuKFeubm4vlSzemzzVec4UgUQ96Q7/exec"; 
+        const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzkIYFs3JvIEQkT3Kh-XdLXtKMdsWBaXg6XY91dk_5i16_bCJf6C9zkycklXubUTir5/exec"; 
 
         const CITIES = ['Adana', 'Adıyaman', 'Afyonkarahisar', 'Ağrı', 'Amasya', 'Ankara', 'Antalya', 'Artvin', 'Aydın', 'Balıkesir', 'Bilecik', 'Bingöl', 'Bitlis', 'Bolu', 'Burdur', 'Bursa', 'Çanakkale', 'Çankırı', 'Çorum', 'Denizli', 'Diyarbakır', 'Edirne', 'Elazığ', 'Erzincan', 'Erzurum', 'Eskişehir', 'Gaziantep', 'Giresun', 'Gümüşhane', 'Hakkari', 'Hatay', 'Isparta', 'Mersin', 'İstanbul', 'İzmir', 'Kars', 'Kastamonu', 'Kayseri', 'Kırklareli', 'Kırşehir', 'Kocaeli', 'Konya', 'Kütahya', 'Malatya', 'Manisa', 'Kahramanmaraş', 'Mardin', 'Muğla', 'Muş', 'Nevşehir', 'Niğde', 'Ordu', 'Rize', 'Sakarya', 'Samsun', 'Siirt', 'Siirt', 'Siirt', 'Sinop', 'Sivas', 'Tekirdağ', 'Tokat', 'Trabzon', 'Tunceli', 'Şanlıurfa', 'Uşak', 'Van', 'Yozgat', 'Zonguldak', 'Aksaray', 'Bayburt', 'Karaman', 'Kırıkkale', 'Batman', 'Şırnak', 'Bartın', 'Ardahan', 'Iğdır', 'Yalova', 'Karabük', 'Kilis', 'Osmaniye', 'Düzce', 'YURT DIŞI'];
 
@@ -553,7 +553,7 @@
         };
 
         // AttendanceControl Component
-        const AttendanceControl = ({ personId, state, isWeeklyMode, onChangeStatus, onChangeDetail, isWeekend }) => {
+        const AttendanceControl = ({ personId, state, isWeeklyMode, onChangeStatus, onChangeDetail, isWeekend, allAttendance = [] }) => {
             const status = state?.status;
 
             const handleStatusClick = (newStatus) => {
@@ -563,6 +563,41 @@
                     onChangeStatus(personId, newStatus);
                 }
             };
+
+            const sortedCities = useMemo(() => {
+                let records = allAttendance;
+                if (!records || records.length === 0) {
+                    try {
+                        const local = localStorage.getItem('ogm_attendance');
+                        if (local) records = JSON.parse(local);
+                    } catch (e) {
+                        console.error("Failed to parse ogm_attendance", e);
+                    }
+                }
+                if (!Array.isArray(records)) records = [];
+                
+                const counts = {};
+                records.forEach(r => {
+                    if (r && r.status === 'Görev' && r.dutyLocation) {
+                        const loc = r.dutyLocation.trim().toLocaleUpperCase('tr-TR');
+                        counts[loc] = (counts[loc] || 0) + 1;
+                    }
+                });
+                
+                const pureCities = CITIES.filter(c => c !== 'YURT DIŞI');
+                pureCities.sort((a, b) => {
+                    const aUpper = a.trim().toLocaleUpperCase('tr-TR');
+                    const bUpper = b.trim().toLocaleUpperCase('tr-TR');
+                    const countA = counts[aUpper] || 0;
+                    const countB = counts[bUpper] || 0;
+                    
+                    if (countB !== countA) {
+                        return countB - countA;
+                    }
+                    return a.localeCompare(b, 'tr-TR');
+                });
+                return pureCities;
+            }, [allAttendance]);
 
             return (
                 <div className="flex flex-col xl:flex-row items-start xl:items-center gap-4 w-full">
@@ -653,12 +688,24 @@
                                     }}
                                 >
                                     <option value="" disabled>Görev Yeri Seç</option>
-                                    {CITIES.map(c => <option key={c} value={c}>{c}</option>)}
+                                    {sortedCities.map(c => <option key={c} value={c}>{c}</option>)}
                                     <option value="YURT DIŞI">DİĞER / YURT DIŞI</option>
                                 </select>
                             </div>
                             {(state?.dutyLocation === 'YURT DIŞI' || (state?.dutyLocation && !CITIES.includes(state.dutyLocation))) && (
                                 <input type="text" placeholder="Yer giriniz" className="bg-forest-800 border border-forest-600 text-white text-xs rounded p-1.5 w-full focus:ring-blue-500 focus:border-blue-500" value={state.dutyLocation === 'YURT DIŞI' ? '' : state.dutyLocation} onChange={(e) => onChangeDetail(personId, 'dutyLocation', e.target.value)} />
+                            )}
+                            {state?.dutyLocation && (
+                                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 mt-1 w-full bg-forest-900/30 p-1.5 rounded border border-forest-800 animate-slide-down">
+                                    <input 
+                                        type="text" 
+                                        placeholder="Bölge adı giriniz" 
+                                        className="bg-forest-800 border border-forest-600 text-white text-xs rounded p-1.5 flex-1 min-w-0 focus:ring-blue-500 focus:border-blue-500" 
+                                        value={state.dutyLocationDetail || ''} 
+                                        onChange={(e) => onChangeDetail(personId, 'dutyLocationDetail', e.target.value)} 
+                                    />
+                                    <span className="text-[10px] text-emerald-400 font-bold whitespace-nowrap">* bölge adı yazmak isterseniz yazınız</span>
+                                </div>
                             )}
                         </div>
                     )}
@@ -2510,6 +2557,36 @@
                 const isYerDestek = getPUnit(p) === "YER DESTEK";
                 return !isSeparated && !isYerDestek;
             });
+
+            const resolvePersonStatus = (p, dateStr, attendanceList) => {
+                const r = attendanceList.find(a => a.personId === p.id && a.date === dateStr && a.status && a.status !== '');
+                if (r) return r;
+                
+                const dObj = new Date(dateStr + 'T12:00:00');
+                const isWe = dObj.getDay() === 0 || dObj.getDay() === 6;
+                const hist = attendanceList
+                    .filter(x => x.personId === p.id && x.date < dateStr && x.status && x.status !== '')
+                    .sort((a, b) => b.date.localeCompare(a.date))[0];
+                
+                if (isWe) {
+                    return { status: undefined };
+                } else {
+                    if (hist) {
+                        const carryOverStatuses = [AttendanceStatus.PRESENT, AttendanceStatus.DUTY];
+                        if (carryOverStatuses.includes(hist.status)) {
+                            return {
+                                ...hist,
+                                leaveType: hist.leaveType || LeaveType.DAILY,
+                                dutyType: hist.dutyType || DutyType.PLANNED
+                            };
+                        } else {
+                            return { status: AttendanceStatus.PRESENT };
+                        }
+                    } else {
+                        return { status: AttendanceStatus.PRESENT };
+                    }
+                }
+            };
             
             const Header = () => (
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 border-b border-forest-500 pb-4 gap-4">
@@ -2530,17 +2607,26 @@
                 </div>
             );
 
-            const PersonItem = ({ p }) => (
-                <div className="flex items-center gap-4 p-3 bg-forest-950/40 rounded-xl border border-forest-700/30 hover:border-orange-500/30 hover:bg-forest-800/40 transition-all duration-300 group shadow-sm hover:shadow-orange-500/10">
-                    <div className="hidden sm:block w-12 h-12 rounded-lg border border-forest-700/50 overflow-hidden bg-forest-900 flex-shrink-0 group-hover:border-orange-500/30 transition-colors">
-                        <SafeImage src={p.photoUrl} personId={p.id} className="personnel-photo-square" />
+            const PersonItem = ({ p }) => {
+                let displayName = p.fullName;
+                if (type === 'GÖREV') {
+                    const resolved = resolvePersonStatus(p, today, attendance);
+                    if (resolved && resolved.dutyLocationDetail && resolved.dutyLocationDetail.trim()) {
+                        displayName = `${p.fullName} (${resolved.dutyLocationDetail.trim()})`.toLocaleUpperCase('tr-TR');
+                    }
+                }
+                return (
+                    <div className="flex items-center gap-4 p-3 bg-forest-950/40 rounded-xl border border-forest-700/30 hover:border-orange-500/30 hover:bg-forest-800/40 transition-all duration-300 group shadow-sm hover:shadow-orange-500/10">
+                        <div className="hidden sm:block w-12 h-12 rounded-lg border border-forest-700/50 overflow-hidden bg-forest-900 flex-shrink-0 group-hover:border-orange-500/30 transition-colors">
+                            <SafeImage src={p.photoUrl} personId={p.id} className="personnel-photo-square" />
+                        </div>
+                        <div className="overflow-hidden">
+                            <div className="text-sm sm:text-base font-bold text-white group-hover:text-orange-400 transition-colors truncate">{displayName}</div>
+                            <div className="text-[10px] sm:text-xs text-forest-400 font-semibold uppercase tracking-wider truncate">{getDisplayTitle(p.title, p.role)}</div>
+                        </div>
                     </div>
-                    <div className="overflow-hidden">
-                        <div className="text-sm sm:text-base font-bold text-white group-hover:text-orange-400 transition-colors truncate">{p.fullName}</div>
-                        <div className="text-[10px] sm:text-xs text-forest-400 font-semibold uppercase tracking-wider truncate">{getDisplayTitle(p.title, p.role)}</div>
-                    </div>
-                </div>
-            );
+                );
+            };
 
             const GroupedPersonList = ({ list, emptyMessage, cols = "sm:grid-cols-2" }) => {
                 const unitsPresent = unitOrder.filter(unit => list.some(p => getPUnit(p) === unit));
@@ -2572,35 +2658,7 @@
                 );
             };
 
-            const resolvePersonStatus = (p, dateStr, attendanceList) => {
-                const r = attendanceList.find(a => a.personId === p.id && a.date === dateStr && a.status && a.status !== '');
-                if (r) return r;
-                
-                const dObj = new Date(dateStr + 'T12:00:00');
-                const isWe = dObj.getDay() === 0 || dObj.getDay() === 6;
-                const hist = attendanceList
-                    .filter(x => x.personId === p.id && x.date < dateStr && x.status && x.status !== '')
-                    .sort((a, b) => b.date.localeCompare(a.date))[0];
-                
-                if (isWe) {
-                    return { status: undefined };
-                } else {
-                    if (hist) {
-                        const carryOverStatuses = [AttendanceStatus.PRESENT, AttendanceStatus.DUTY];
-                        if (carryOverStatuses.includes(hist.status)) {
-                            return {
-                                ...hist,
-                                leaveType: hist.leaveType || LeaveType.DAILY,
-                                dutyType: hist.dutyType || DutyType.PLANNED
-                            };
-                        } else {
-                            return { status: AttendanceStatus.PRESENT };
-                        }
-                    } else {
-                        return { status: AttendanceStatus.PRESENT };
-                    }
-                }
-            };
+
 
             if (type === 'MESAI') {
                 const mesaiList = filteredPersonnel.filter(p => {
@@ -3262,6 +3320,7 @@
                             personId: p.id,
                             status: s.status,
                             dutyLocation: s.dutyLocation,
+                            dutyLocationDetail: s.dutyLocationDetail,
                             leaveType: s.leaveType,
                             note: s.note,
                             dutyType: dType,
@@ -3289,6 +3348,7 @@
                                     personId: p.id,
                                     status: s.status,
                                     dutyLocation: s.dutyLocation,
+                                    dutyLocationDetail: s.dutyLocationDetail,
                                     leaveType: s.leaveType,
                                     note: s.note,
                                     dutyType: dType,
@@ -3305,6 +3365,7 @@
                                     personId: p.id,
                                     status: s.status,
                                     dutyLocation: s.dutyLocation,
+                                    dutyLocationDetail: s.dutyLocationDetail,
                                     leaveType: s.leaveType,
                                     note: s.note,
                                     dutyType: dType,
@@ -3346,6 +3407,7 @@
                         status, 
                         dutyType: status === AttendanceStatus.DUTY ? (prev[pid]?.dutyType || DutyType.PLANNED) : undefined,
                         dutyLocation: (status === AttendanceStatus.DUTY || status === AttendanceStatus.COURSE) ? (prev[pid]?.dutyLocation || '') : undefined,
+                        dutyLocationDetail: status === AttendanceStatus.DUTY ? (prev[pid]?.dutyLocationDetail || '') : undefined,
                         includeWeekend: status === AttendanceStatus.DUTY ? true : (prev[pid]?.includeWeekend || false),
                         note: status === AttendanceStatus.OTHER ? prev[pid]?.note : undefined,
                         leaveType: status === AttendanceStatus.LEAVE ? (prev[pid]?.leaveType || LeaveType.DAILY) : undefined
@@ -3461,6 +3523,7 @@
                             ...prev[dateStr],
                             status,
                             dutyLocation: (status === AttendanceStatus.DUTY || status === AttendanceStatus.COURSE) ? (prev[dateStr]?.dutyLocation || '') : undefined,
+                            dutyLocationDetail: status === AttendanceStatus.DUTY ? (prev[dateStr]?.dutyLocationDetail || '') : undefined,
                             dutyType: status === AttendanceStatus.DUTY ? (prev[dateStr]?.dutyType || DutyType.PLANNED) : undefined,
                             leaveType: status === AttendanceStatus.LEAVE ? (prev[dateStr]?.leaveType || LeaveType.DAILY) : undefined,
                             includeWeekend: status === AttendanceStatus.DUTY ? true : (prev[dateStr]?.includeWeekend || false),
@@ -3514,6 +3577,7 @@
                         personId: detailPerson.id,
                         status: s.status,
                         dutyLocation: s.dutyLocation,
+                        dutyLocationDetail: s.dutyLocationDetail,
                         leaveType: s.leaveType,
                         note: s.note,
                         dutyType: s.dutyType,
@@ -3847,6 +3911,7 @@
                                     const d = new Date(rangeStartDate + 'T12:00:00');
                                     return d.getDay() === 0 || d.getDay() === 6;
                                 })()}
+                                allAttendance={allRecs}
                             />
                         </div>
                         {shouldBlur && <div className="absolute inset-0 flex items-center justify-center"><Button onClick={() => openDetailModalWithAuth(p)}><Edit2 size={16} className="mr-2" /> Ayrıntıyı Gör ve Düzenle</Button></div>}
@@ -4108,6 +4173,7 @@
                                                     onChangeStatus={(id, s) => handleModalStatusChange(id, s)} 
                                                     onChangeDetail={(id, f, v) => handleModalDayChange(id, f, v)} 
                                                     isWeekend={noonDate.getDay() === 0 || noonDate.getDay() === 6}
+                                                    allAttendance={allRecs}
                                                 />
                                             </div>
                                         </div>
