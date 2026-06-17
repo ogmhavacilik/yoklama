@@ -728,9 +728,11 @@
             const [selectedHarcirahCity, setSelectedHarcirahCity] = useState('');
             const [selectedHarcirahUnit, setSelectedHarcirahUnit] = useState('');
             const [selectedHarcirahRange, setSelectedHarcirahRange] = useState(null); // { start: string, end: string }
+            const [expandedHarcirahMonth, setExpandedHarcirahMonth] = useState(null); // string like "2026-06"
             const [harcirahPersonnel, setHarcirahPersonnel] = useState([]);
             const [selectedHarcirahPersonnelIds, setSelectedHarcirahPersonnelIds] = useState(new Set());
             const [selectedHarcirahDates, setSelectedHarcirahDates] = useState({}); // { personId: Set<dateStr> }
+            const [expandedHarcirahPersonIds, setExpandedHarcirahPersonIds] = useState(new Set());
             const [attendancePreviewModalOpen, setAttendancePreviewModalOpen] = useState(false);
             const [attendancePreviewData, setAttendancePreviewData] = useState({ range: null, records: [] });
             const [showFullAttendanceModal, setShowFullAttendanceModal] = useState(false);
@@ -1048,6 +1050,79 @@
             };
 
             // --- Harcırah Logic ---
+            const getMergedHarcirahBlocks = useCallback((datesArray) => {
+                if (!datesArray || datesArray.length === 0) return [];
+                const sorted = [...datesArray].sort();
+                
+                const blocks = [];
+                let currentBlock = { start: sorted[0], end: sorted[0] };
+                
+                for (let i = 1; i < sorted.length; i++) {
+                    const prevStr = currentBlock.end;
+                    const currStr = sorted[i];
+                    
+                    const d1 = new Date(prevStr); d1.setHours(12,0,0,0);
+                    const d2 = new Date(currStr); d2.setHours(12,0,0,0);
+                    const gapDays = Math.round((d2 - d1) / (1000 * 60 * 60 * 24));
+                    
+                    // Gap of up to 3 days includes Friday to Monday weekend bridges
+                    if (gapDays <= 3) {
+                        currentBlock.end = currStr;
+                    } else {
+                        blocks.push(currentBlock);
+                        currentBlock = { start: currStr, end: currStr };
+                    }
+                }
+                blocks.push(currentBlock);
+                return blocks;
+            }, []);
+
+            const getBlockSpanLabel = useCallback((block, monthKey) => {
+                if (!block || !monthKey) return null;
+                const startPart = block.start.substring(0, 7); // "YYYY-MM"
+                const endPart = block.end.substring(0, 7);     // "YYYY-MM"
+                const isStartDiff = startPart !== monthKey;
+                const isEndDiff = endPart !== monthKey;
+                
+                if (isStartDiff && isEndDiff) {
+                    const startMonth = new Date(`${block.start}T12:00:00`).toLocaleDateString('tr-TR', { month: 'long' });
+                    const endMonth = new Date(`${block.end}T12:00:00`).toLocaleDateString('tr-TR', { month: 'long' });
+                    return `(${startMonth} ayında başlayıp ${endMonth} ayına devam ediyor)`;
+                } else if (isStartDiff) {
+                    const startMonth = new Date(`${block.start}T12:00:00`).toLocaleDateString('tr-TR', { month: 'long' });
+                    return `(${startMonth} ayından başlıyor / devam ediyor)`;
+                } else if (isEndDiff) {
+                    const endMonth = new Date(`${block.end}T12:00:00`).toLocaleDateString('tr-TR', { month: 'long' });
+                    return `(${endMonth} ayına sarkıyor / devam ediyor)`;
+                }
+                return null;
+            }, []);
+
+            const getMajorityMonthOfBlock = useCallback((block) => {
+                if (!block) return '';
+                const days = getDaysInRange(block.start, block.end);
+                const monthCounts = {};
+                days.forEach(d => {
+                    const dStr = normalizeDate(d);
+                    const monthKey = dStr.substring(0, 7); // "YYYY-MM"
+                    monthCounts[monthKey] = (monthCounts[monthKey] || 0) + 1;
+                });
+                
+                let maxCount = 0;
+                let majorityMonth = '';
+                Object.keys(monthCounts).forEach(m => {
+                    if (monthCounts[m] > maxCount) {
+                        maxCount = monthCounts[m];
+                        majorityMonth = m;
+                    } else if (monthCounts[m] === maxCount) {
+                        if (m < majorityMonth) {
+                            majorityMonth = m;
+                        }
+                    }
+                });
+                return majorityMonth;
+            }, []);
+
             const availableHarcirahCities = useMemo(() => {
                 const cities = new Set();
                 allAttendance.forEach(r => {
@@ -1077,6 +1152,7 @@
                 setSelectedHarcirahCity(city);
                 setSelectedHarcirahUnit('');
                 setSelectedHarcirahRange(null);
+                setExpandedHarcirahMonth(null);
                 setHarcirahPersonnel([]);
                 setSelectedHarcirahPersonnelIds(new Set());
                 setHarcirahStep('city_selected');
@@ -1085,6 +1161,7 @@
             const handleHarcirahUnitSelect = (unitCat) => {
                 setSelectedHarcirahUnit(unitCat);
                 setSelectedHarcirahRange(null);
+                setExpandedHarcirahMonth(null);
                 setHarcirahPersonnel([]);
                 setSelectedHarcirahPersonnelIds(new Set());
                 setHarcirahStep('unit_selected');
@@ -1094,84 +1171,92 @@
                 if (!selectedHarcirahCity || !selectedHarcirahUnit) return [];
                 
                 const unitPersonIds = new Set(plList.filter(p => getHarcirahCategory(p) === selectedHarcirahUnit).map(p => p.id));
+                const monthKeys = new Set();
                 
-                // Get ALL duty dates for this unit
-                const allUnitDutyRecs = allAttendance.filter(r => 
-                    unitPersonIds.has(r.personId) && 
-                    r.status === AttendanceStatus.DUTY
-                ).sort((a, b) => a.date.localeCompare(b.date));
-
-                if (allUnitDutyRecs.length === 0) return [];
-
-                const allDates = [...new Set(allUnitDutyRecs.map(r => r.date))].sort();
-                
-                const ranges = [];
-                if (allDates.length > 0) {
-                    let start = allDates[0];
-                    let prev = allDates[0];
+                // Group each person's duties into blocks and determine their majority month
+                unitPersonIds.forEach(pId => {
+                    const personDutyDates = allAttendance.filter(r => 
+                        r.personId === pId && 
+                        r.status === AttendanceStatus.DUTY &&
+                        r.dutyLocation && r.dutyLocation.trim().toLocaleUpperCase('tr-TR') === selectedHarcirahCity.trim().toLocaleUpperCase('tr-TR')
+                    ).map(r => r.date).sort();
                     
-                    // Helper to check if a date has any record with a DIFFERENT city for this unit
-                    const getCityForDate = (dateStr) => {
-                        const recs = allUnitDutyRecs.filter(r => r.date === dateStr && r.dutyLocation?.trim());
-                        if (recs.length === 0) return null;
-                        // If multiple cities on same day (unlikely but possible), prioritize selected city
-                        const hasSelected = recs.some(r => r.dutyLocation.trim().toLocaleUpperCase('tr-TR') === selectedHarcirahCity);
-                        if (hasSelected) return selectedHarcirahCity;
-                        return recs[0].dutyLocation.trim().toLocaleUpperCase('tr-TR');
-                    };
-
-                    let currentRangeHasSelectedCity = getCityForDate(start) === selectedHarcirahCity;
-
-                    for (let i = 1; i <= allDates.length; i++) {
-                        const current = allDates[i];
-                        let shouldBreak = false;
-                        let diff = 0;
-
-                        if (current) {
-                            const d1 = new Date(prev); d1.setHours(12,0,0,0);
-                            const d2 = new Date(current); d2.setHours(12,0,0,0);
-                            diff = Math.round((d2 - d1) / (1000 * 60 * 60 * 24));
-                            
-                            if (diff > 3) {
-                                shouldBreak = true;
-                            } else {
-                                // Check if city changed to something else
-                                const prevCity = getCityForDate(prev);
-                                const currCity = getCityForDate(current);
-                                if (prevCity && currCity && prevCity !== currCity) {
-                                    shouldBreak = true;
-                                }
+                    if (personDutyDates.length > 0) {
+                        const personBlocks = getMergedHarcirahBlocks(personDutyDates);
+                        personBlocks.forEach(b => {
+                            const majMonth = getMajorityMonthOfBlock(b);
+                            if (majMonth) {
+                                monthKeys.add(majMonth);
                             }
-                        } else {
-                            shouldBreak = true;
-                        }
-                        
-                        if (shouldBreak) {
-                            if (currentRangeHasSelectedCity) {
-                                ranges.push({ start, end: prev });
-                            }
-                            if (current) {
-                                start = current;
-                                currentRangeHasSelectedCity = getCityForDate(start) === selectedHarcirahCity;
-                            }
-                        } else {
-                            if (getCityForDate(current) === selectedHarcirahCity) {
-                                currentRangeHasSelectedCity = true;
-                            }
-                        }
-                        prev = current;
+                        });
                     }
-                }
+                });
+
+                if (monthKeys.size === 0) return [];
+
+                const trMonthNames = [
+                    "Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", 
+                    "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"
+                ];
+
+                const ranges = Array.from(monthKeys).map(key => {
+                    const [yearStr, monthStr] = key.split('-');
+                    const year = parseInt(yearStr);
+                    const monthIdx = parseInt(monthStr) - 1;
+
+                    // Range start from the first day of that month
+                    const start = `${year}-${String(monthIdx + 1).padStart(2, '0')}-01`;
+                    // Range end is the last day of that month
+                    const lastDay = new Date(year, monthIdx + 1, 0).getDate();
+                    const end = `${year}-${String(monthIdx + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+
+                    return {
+                        start,
+                        end,
+                        label: `${trMonthNames[monthIdx]} ${year}`,
+                        monthKey: key
+                    };
+                });
+
+                // Sort ranges chronologically (newest first)
+                ranges.sort((a, b) => b.monthKey.localeCompare(a.monthKey));
                 return ranges;
-            }, [selectedHarcirahCity, selectedHarcirahUnit, allAttendance, plList]);
+            }, [selectedHarcirahCity, selectedHarcirahUnit, allAttendance, plList, getMergedHarcirahBlocks, getMajorityMonthOfBlock]);
+
+            const getMonthSubBlocks = useCallback((monthKey) => {
+                if (!selectedHarcirahCity || !selectedHarcirahUnit) return [];
+                const unitPersonIds = new Set(plList.filter(p => getHarcirahCategory(p) === selectedHarcirahUnit).map(p => p.id));
+                const allUnitDutyDates = allAttendance.filter(r => 
+                    unitPersonIds.has(r.personId) && 
+                    r.status === AttendanceStatus.DUTY &&
+                    r.dutyLocation && r.dutyLocation.trim().toLocaleUpperCase('tr-TR') === selectedHarcirahCity.trim().toLocaleUpperCase('tr-TR')
+                ).map(r => r.date);
+                const uniqueDates = [...new Set(allUnitDutyDates)].sort();
+                const allBlocks = getMergedHarcirahBlocks(uniqueDates);
+                return allBlocks.filter(b => getMajorityMonthOfBlock(b) === monthKey);
+            }, [selectedHarcirahCity, selectedHarcirahUnit, allAttendance, plList, getMergedHarcirahBlocks, getMajorityMonthOfBlock]);
 
             const toggleHarcirahDate = (personId, dateStr) => {
                 setSelectedHarcirahDates(prev => {
                     const next = { ...prev };
                     const dates = new Set(next[personId] || []);
-                    if (dates.has(dateStr)) dates.delete(dateStr);
-                    else dates.add(dateStr);
+                    if (dates.has(dateStr)) {
+                        dates.delete(dateStr);
+                    } else {
+                        dates.add(dateStr);
+                    }
                     next[personId] = dates;
+
+                    setSelectedHarcirahPersonnelIds(prevIds => {
+                        const nextIds = new Set(prevIds);
+                        if (dates.size === 0) {
+                            nextIds.delete(personId);
+                        } else {
+                            nextIds.add(personId);
+                        }
+                        return nextIds;
+                    });
+
                     return next;
                 });
             };
@@ -1181,18 +1266,21 @@
                 
                 const unitPersonIds = new Set(plList.filter(p => getHarcirahCategory(p) === selectedHarcirahUnit).map(p => p.id));
                 
-                // Find personnel who were in this city during this range
-                const personIdsInRange = new Set(
-                    allAttendance
-                        .filter(r => 
-                            unitPersonIds.has(r.personId) &&
-                            r.status === AttendanceStatus.DUTY && 
-                            r.dutyLocation && r.dutyLocation.trim().toLocaleUpperCase('tr-TR') === selectedHarcirahCity.trim().toLocaleUpperCase('tr-TR') &&
-                            r.date >= range.start &&
-                            r.date <= range.end
-                        )
-                        .map(r => r.personId)
-                );
+                // Find personnel who had a block with majority month equal to range.monthKey
+                const personIdsInRange = new Set();
+                unitPersonIds.forEach(pId => {
+                    const personDutyDates = allAttendance.filter(r => 
+                        r.personId === pId && 
+                        r.status === AttendanceStatus.DUTY &&
+                        r.dutyLocation && r.dutyLocation.trim().toLocaleUpperCase('tr-TR') === selectedHarcirahCity.trim().toLocaleUpperCase('tr-TR')
+                    ).map(r => r.date).sort();
+                    
+                    const personBlocks = getMergedHarcirahBlocks(personDutyDates);
+                    const blockInSelectedMonthKey = personBlocks.some(b => getMajorityMonthOfBlock(b) === range.monthKey);
+                    if (blockInSelectedMonthKey) {
+                        personIdsInRange.add(pId);
+                    }
+                });
 
                 const eligible = plList.filter(p => personIdsInRange.has(p.id) && getHarcirahCategory(p) === selectedHarcirahUnit);
                 setHarcirahPersonnel(eligible);
@@ -1200,17 +1288,20 @@
                 // Initialize selected dates for each person
                 const initialDates = {};
                 eligible.forEach(p => {
-                    const dates = new Set(
-                        allAttendance
-                            .filter(r => 
-                                r.personId === p.id && 
-                                r.status === AttendanceStatus.DUTY && 
-                                r.dutyLocation && r.dutyLocation.trim().toLocaleUpperCase('tr-TR') === selectedHarcirahCity.trim().toLocaleUpperCase('tr-TR') &&
-                                r.date >= range.start && 
-                                r.date <= range.end
-                            )
-                            .map(r => r.date)
-                    );
+                    const dates = new Set();
+                    const personDutyDates = allAttendance.filter(r => 
+                        r.personId === p.id && 
+                        r.status === AttendanceStatus.DUTY && 
+                        r.dutyLocation && r.dutyLocation.trim().toLocaleUpperCase('tr-TR') === selectedHarcirahCity.trim().toLocaleUpperCase('tr-TR')
+                    ).map(r => r.date).sort();
+                    
+                    const personBlocks = getMergedHarcirahBlocks(personDutyDates);
+                    const matchBlocks = personBlocks.filter(b => getMajorityMonthOfBlock(b) === range.monthKey);
+                    
+                    matchBlocks.forEach(b => {
+                        const datesInBlock = getDaysInRange(b.start, b.end).map(d => normalizeDate(d));
+                        datesInBlock.forEach(dStr => dates.add(dStr));
+                    });
                     initialDates[p.id] = dates;
                 });
                 setSelectedHarcirahDates(initialDates);
@@ -1220,14 +1311,94 @@
             };
 
             const toggleHarcirahPerson = (id) => {
-                const next = new Set(selectedHarcirahPersonnelIds);
-                if (next.has(id)) next.delete(id);
-                else next.add(id);
-                setSelectedHarcirahPersonnelIds(next);
+                setSelectedHarcirahPersonnelIds(prevIds => {
+                    const nextIds = new Set(prevIds);
+                    const isSelected = nextIds.has(id);
+                    if (isSelected) {
+                        nextIds.delete(id);
+                        setSelectedHarcirahDates(prevDates => {
+                            const nextDates = { ...prevDates };
+                            nextDates[id] = new Set();
+                            return nextDates;
+                        });
+                    } else {
+                        nextIds.add(id);
+                        setSelectedHarcirahDates(prevDates => {
+                            const nextDates = { ...prevDates };
+                            const dates = new Set();
+                            const personDutyDates = allAttendance.filter(r => 
+                                r.personId === id && 
+                                r.status === AttendanceStatus.DUTY && 
+                                r.dutyLocation && r.dutyLocation.trim().toLocaleUpperCase('tr-TR') === selectedHarcirahCity.trim().toLocaleUpperCase('tr-TR')
+                            ).map(r => r.date).sort();
+                            
+                            const personBlocks = getMergedHarcirahBlocks(personDutyDates);
+                            const matchBlocks = personBlocks.filter(b => getMajorityMonthOfBlock(b) === selectedHarcirahRange.monthKey);
+                            
+                            matchBlocks.forEach(b => {
+                                const datesInBlock = getDaysInRange(b.start, b.end).map(d => normalizeDate(d));
+                                datesInBlock.forEach(dStr => dates.add(dStr));
+                            });
+                            nextDates[id] = dates;
+                            return nextDates;
+                        });
+                    }
+                    return nextIds;
+                });
+            };
+
+            const toggleHarcirahBlock = (personId, block) => {
+                const datesInBlock = getDaysInRange(block.start, block.end).map(d => normalizeDate(d));
+                setSelectedHarcirahDates(prev => {
+                    const next = { ...prev };
+                    const currentSelectedSet = new Set(next[personId] || []);
+                    const blockCurrentlySelected = datesInBlock.every(d => currentSelectedSet.has(d));
+                    
+                    if (blockCurrentlySelected) {
+                        datesInBlock.forEach(d => currentSelectedSet.delete(d));
+                    } else {
+                        datesInBlock.forEach(d => currentSelectedSet.add(d));
+                    }
+                    next[personId] = currentSelectedSet;
+                    
+                    setSelectedHarcirahPersonnelIds(prevIds => {
+                        const nextIds = new Set(prevIds);
+                        if (currentSelectedSet.size === 0) {
+                            nextIds.delete(personId);
+                        } else {
+                            nextIds.add(personId);
+                        }
+                        return nextIds;
+                    });
+
+                    return next;
+                });
             };
 
             const addAllHarcirahPersonnel = () => {
-                setSelectedHarcirahPersonnelIds(new Set(harcirahPersonnel.map(p => p.id)));
+                const nextPersonIds = new Set(harcirahPersonnel.map(p => p.id));
+                setSelectedHarcirahPersonnelIds(nextPersonIds);
+                setSelectedHarcirahDates(prev => {
+                    const next = { ...prev };
+                    harcirahPersonnel.forEach(p => {
+                        const dates = new Set();
+                        const personDutyDates = allAttendance.filter(r => 
+                            r.personId === p.id && 
+                            r.status === AttendanceStatus.DUTY && 
+                            r.dutyLocation && r.dutyLocation.trim().toLocaleUpperCase('tr-TR') === selectedHarcirahCity.trim().toLocaleUpperCase('tr-TR')
+                        ).map(r => r.date).sort();
+                        
+                        const personBlocks = getMergedHarcirahBlocks(personDutyDates);
+                        const matchBlocks = personBlocks.filter(b => getMajorityMonthOfBlock(b) === selectedHarcirahRange.monthKey);
+                        
+                        matchBlocks.forEach(b => {
+                            const datesInBlock = getDaysInRange(b.start, b.end).map(d => normalizeDate(d));
+                            datesInBlock.forEach(dStr => dates.add(dStr));
+                        });
+                        next[p.id] = dates;
+                    });
+                    return next;
+                });
             };
 
             const exportHarcirahExcel = async () => {
@@ -1263,28 +1434,26 @@
 
                     const selectedPeople = harcirahPersonnel.filter(p => selectedHarcirahPersonnelIds.has(p.id));
                     let lastDataRowIndex = 3;
+                    let blockCounter = 1;
 
-                    selectedPeople.forEach((p, idx) => {
-                        const rowIndex = idx + 4;
-                        lastDataRowIndex = rowIndex;
-                        worksheet.getRow(rowIndex).height = 18;
-                        
+                    selectedPeople.forEach((p) => {
                         const selectedDatesForPerson = Array.from(selectedHarcirahDates[p.id] || []).sort();
+                        const blocks = getMergedHarcirahBlocks(selectedDatesForPerson);
                         
-                        if (selectedDatesForPerson.length > 0) {
-                            const firstDateStr = selectedDatesForPerson[0];
-                            const lastDateStr = selectedDatesForPerson[selectedDatesForPerson.length - 1];
+                        blocks.forEach((block) => {
+                            const rowIndex = lastDataRowIndex + 1;
+                            lastDataRowIndex = rowIndex;
+                            worksheet.getRow(rowIndex).height = 18;
                             
-                            const d1 = new Date(firstDateStr); d1.setHours(12,0,0,0);
-                            const d2 = new Date(lastDateStr); d2.setHours(12,0,0,0);
+                            const d1 = new Date(block.start); d1.setHours(12,0,0,0);
+                            const d2 = new Date(block.end); d2.setHours(12,0,0,0);
                             
-                            const countDays = selectedDatesForPerson.length;
                             const hStart = new Date(d1);
                             const hEnd = new Date(d2);
-                            const diffDays = countDays;
+                            const diffDays = Math.round((d2 - d1) / (1000 * 60 * 60 * 24)) + 1;
 
                             const rowData = [
-                                idx + 1,
+                                blockCounter++,
                                 p.fullName,
                                 p.tcNo || '',
                                 getDisplayTitle(p.title, p.role),
@@ -1299,7 +1468,7 @@
                                 cell.border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
                                 cell.alignment = { horizontal: 'center', vertical: 'middle' };
                             });
-                        }
+                        });
                     });
 
                     // Signature Block (Rank 1 - Murat Akmeşe Logic)
@@ -1726,145 +1895,291 @@
 
                                     {harcirahStep === 'unit_selected' && (
                                         <div className="pt-6 border-t border-forest-700 animate-slide-down">
-                                            <label className="text-xs font-bold text-forest-400 uppercase block mb-2">3. Görev Tarih Aralığı Seçiniz</label>
-                                            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
-                                                {availableHarcirahRanges.length > 0 ? (
-                                                    availableHarcirahRanges.map((range, idx) => {
-                                                        const d1 = new Date(range.start); d1.setHours(12,0,0,0);
-                                                        const d2 = new Date(range.end); d2.setHours(12,0,0,0);
-                                                        const rawDiffDays = Math.round((d2 - d1) / (1000 * 60 * 60 * 24)) + 1;
-                                                        
-                                                        let hStart = new Date(d1);
-                                                        let hEnd = new Date(d2);
-
-                                                        const startStr = hStart.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' });
-                                                        const endStr = hEnd.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' });
-                                                        const displayDays = rawDiffDays;
-
+                                            <label className="text-xs font-bold text-forest-400 uppercase block mb-3">3. Görev Ayı Seçiniz</label>
+                                            
+                                            {availableHarcirahRanges.length > 0 ? (
+                                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                                                    {availableHarcirahRanges.map((range, idx) => {
+                                                        const isSelected = selectedHarcirahRange?.monthKey === range.monthKey;
                                                         return (
-                                                            <div key={idx} className="relative group">
+                                                            <div key={idx} className="relative">
                                                                 <button 
                                                                     onClick={() => handleHarcirahRangeSelect(range)}
-                                                                    className={`w-full p-3 text-sm rounded border text-left flex flex-col pr-12 ${selectedHarcirahRange?.start === range.start ? 'bg-forest-500 border-forest-400 text-white' : 'bg-forest-950 border-forest-700 text-forest-300 hover:border-forest-500'}`}
+                                                                    className={`w-full p-4 rounded-xl border text-left flex justify-between items-center transition-all cursor-pointer ${isSelected ? 'bg-forest-500 border-forest-400 text-white' : 'bg-forest-950 border-forest-700 text-forest-300 hover:border-forest-500'}`}
                                                                 >
-                                                                    <div className="flex justify-between items-center w-full">
-                                                                        <span className="font-bold">{startStr}</span>
-                                                                        <span className="text-[10px] bg-forest-800 px-1.5 py-0.5 rounded text-forest-200">{displayDays} GÜN</span>
-                                                                    </div>
-                                                                    <span className="text-[10px] opacity-70">- {endStr}</span>
-                                                                </button>
-                                                                <button 
-                                                                    onClick={(e) => {
-                                                                        e.stopPropagation();
-                                                                        setFullAttendanceParams({ 
-                                                                            model: selectedHarcirahUnit, 
-                                                                            start: range.start, 
-                                                                            end: range.end 
-                                                                        });
-                                                                        setShowFullAttendanceModal(true);
-                                                                    }}
-                                                                    className="absolute right-2 top-1/2 -translate-y-1/2 p-2 bg-orange-600 hover:bg-orange-500 text-white rounded text-[10px] uppercase font-bold shadow-lg transition-all"
-                                                                    title="Tam Yoklama Görünümünü Aç"
-                                                                >
-                                                                    Yoklama Göster
+                                                                    <span className="font-bold text-sm">{range.label}</span>
+                                                                    <span className="text-[10px] bg-forest-900 border border-forest-700 px-2 py-0.5 rounded text-forest-200 font-semibold uppercase">Seç</span>
                                                                 </button>
                                                             </div>
                                                         );
-                                                    })
-                                                ) : (
-                                                    <div className="col-span-full text-forest-500 text-xs italic p-4 text-center bg-forest-950/50 rounded border border-forest-800">
-                                                        Bu birim için görev tarihi bulunamadı.
-                                                    </div>
-                                                )}
-                                            </div>
+                                                    })}
+                                                </div>
+                                            ) : (
+                                                <div className="text-forest-500 text-xs italic p-4 text-center bg-forest-950/50 rounded border border-forest-800">
+                                                    Bu birim için görev tarihi bulunamadı.
+                                                </div>
+                                            )}
                                         </div>
                                     )}
 
-                                    {harcirahStep === 'range_selected' && (
+                                    {selectedHarcirahRange && (
                                         <div className="pt-6 border-t border-forest-700 animate-slide-down">
-                                            <div className="flex justify-between items-center mb-4">
-                                                <h3 className="font-bold text-white">4. Personel Seçimi ({harcirahPersonnel.length} Kişi Bulundu)</h3>
-                                                <div className="flex gap-2">
-                                                    <Button variant="secondary" size="sm" onClick={addAllHarcirahPersonnel}>Tümünü Seç</Button>
-                                                    <Button variant="success" size="sm" onClick={exportHarcirahExcel} disabled={selectedHarcirahPersonnelIds.size === 0}>
+                                            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
+                                                <div>
+                                                    <h3 className="font-bold text-white text-base">4. Personel Seçimi ({harcirahPersonnel.length} Kişi Bulundu)</h3>
+                                                    <p className="text-xs text-forest-400">Görev Ayı: {selectedHarcirahRange.label}</p>
+                                                </div>
+                                                <div className="flex gap-2 w-full sm:w-auto">
+                                                    <Button variant="secondary" size="sm" onClick={addAllHarcirahPersonnel} className="flex-1 sm:flex-none">Tümünü Seç</Button>
+                                                    <Button variant="success" size="sm" onClick={exportHarcirahExcel} disabled={selectedHarcirahPersonnelIds.size === 0} className="flex-1 sm:flex-none">
                                                         <LucideIcons.FileSpreadsheet size={16} className="mr-2" /> Şablonu Oluştur (Excel)
                                                     </Button>
                                                 </div>
                                             </div>
                                             
-                                            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
-                                                {harcirahPersonnel.map(p => (
-                                                    <div 
-                                                        key={p.id} 
-                                                        onClick={() => toggleHarcirahPerson(p.id)}
-                                                        className={`p-3 rounded border cursor-pointer transition-all ${selectedHarcirahPersonnelIds.has(p.id) ? 'bg-forest-700 border-forest-400' : 'bg-forest-950 border-forest-800 opacity-70 hover:opacity-100'}`}
-                                                    >
-                                                        <div className="flex items-center gap-3 mb-2">
-                                                            <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${selectedHarcirahPersonnelIds.has(p.id) ? 'bg-green-500 border-green-400' : 'border-forest-600'}`}>
-                                                                {selectedHarcirahPersonnelIds.has(p.id) && <LucideIcons.Check size={10} className="text-white" />}
-                                                            </div>
-                                                            <div className="flex-1">
-                                                                <div className="text-sm font-bold text-white">{p.fullName}</div>
-                                                                <div className="text-[10px] text-forest-400 uppercase">{getDisplayTitle(p.title, p.role)}</div>
-                                                            </div>
-                                                            <button 
-                                                                onClick={(e) => { 
-                                                                    e.stopPropagation(); 
-                                                                    const personUnit = (pers) => {
-                                                                        if (YONETIM_NAMES.includes(pers.fullName)) return "YÖNETİM";
-                                                                        if (pers.unit) return pers.unit;
-                                                                        const titleUpper = (pers.title || '').toLocaleUpperCase('tr-TR');
-                                                                        if (titleUpper.includes('BELL')) return "BELL-429";
-                                                                        if (titleUpper.includes('C-650')) return "C-650";
-                                                                        if (titleUpper.includes('B-360')) return "B-360";
-                                                                        if (titleUpper.includes('T-70')) return "T-70";
-                                                                        if (titleUpper.includes('AT-802')) return "AT-802";
-                                                                        if (titleUpper.includes('TEKNİ') || titleUpper.includes('UÇAK')) return "TEKNİK EKİP";
-                                                                        if (titleUpper.includes('MEMUR') || titleUpper.includes('İŞÇİ') || titleUpper.includes('MÜHENDİS') || titleUpper.includes('ŞÖFÖR') || [Role.DRIVER, Role.CLEANING, Role.KITCHEN, Role.TEA_SERVICE, Role.OTHER].includes(pers.role)) return "YER DESTEK";
-                                                                        return "İDARİ";
-                                                                    };
-                                                                    setFullAttendanceParams({ 
-                                                                        model: personUnit(p), 
-                                                                        start: selectedHarcirahRange.start, 
-                                                                        end: selectedHarcirahRange.end, 
-                                                                        searchName: p.fullName 
+                                            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                                {harcirahPersonnel.map(p => {
+                                                    const isSelected = selectedHarcirahPersonnelIds.has(p.id);
+                                                    const isExpanded = expandedHarcirahPersonIds.has(p.id);
+                                                    
+                                                    // Load all duty dates of this person in this city across all times, to merge into contiguous blocks
+                                                    const allPersonDutyDates = allAttendance.filter(r => 
+                                                        r.personId === p.id && 
+                                                        r.status === AttendanceStatus.DUTY && 
+                                                        r.dutyLocation && r.dutyLocation.trim().toLocaleUpperCase('tr-TR') === selectedHarcirahCity.trim().toLocaleUpperCase('tr-TR')
+                                                    ).map(r => r.date).sort();
+                                                    
+                                                    const allPersonBlocks = getMergedHarcirahBlocks(allPersonDutyDates);
+                                                    // Keep only blocks whose majority month is the selected range's monthKey
+                                                    const personBlocks = allPersonBlocks.filter(b => 
+                                                        getMajorityMonthOfBlock(b) === selectedHarcirahRange.monthKey
+                                                    );
+                                                    
+                                                    // Calculate total days based on either selected dates (if checked) or total block days (if unchecked)
+                                                    const displayedDays = (() => {
+                                                        if (!isSelected) {
+                                                            return personBlocks.reduce((sum, b) => {
+                                                                const d1 = new Date(b.start); d1.setHours(12,0,0,0);
+                                                                const d2 = new Date(b.end); d2.setHours(12,0,0,0);
+                                                                return sum + Math.round((d2 - d1) / (1000 * 60 * 60 * 24)) + 1;
+                                                            }, 0);
+                                                        }
+                                                        const selectedDatesForPerson = Array.from(selectedHarcirahDates[p.id] || []);
+                                                        const selectedBlocksForPerson = getMergedHarcirahBlocks(selectedDatesForPerson);
+                                                        return selectedBlocksForPerson.reduce((sum, b) => {
+                                                            const blockStart = new Date(b.start); blockStart.setHours(12,0,0,0);
+                                                            const blockEnd = new Date(b.end); blockEnd.setHours(12,0,0,0);
+                                                            return sum + Math.round((blockEnd - blockStart) / (1000 * 60 * 60 * 24)) + 1;
+                                                        }, 0);
+                                                    })();
+                                                    
+                                                    return (
+                                                        <div 
+                                                            key={p.id} 
+                                                            className={`rounded-xl border transition-all duration-200 overflow-hidden ${
+                                                                isSelected 
+                                                                    ? 'bg-forest-900 border-forest-500 shadow-md shadow-forest-950/50' 
+                                                                    : 'bg-forest-950 border-forest-800 hover:border-forest-700 opacity-80 hover:opacity-100'
+                                                            }`}
+                                                        >
+                                                            {/* Card Header clickable to toggle expansion */}
+                                                            <div 
+                                                                onClick={() => {
+                                                                    setExpandedHarcirahPersonIds(prev => {
+                                                                        const next = new Set(prev);
+                                                                        if (next.has(p.id)) {
+                                                                            next.delete(p.id);
+                                                                        } else {
+                                                                            next.add(p.id);
+                                                                        }
+                                                                        return next;
                                                                     });
-                                                                    setShowFullAttendanceModal(true);
-                                                                }} 
-                                                                className="p-1.5 hover:bg-forest-800 rounded-lg text-forest-400 hover:text-white transition-colors"
-                                                                title="Yoklamada Göster"
+                                                                }}
+                                                                className="p-4 flex items-center justify-between cursor-pointer select-none hover:bg-forest-800/25 transition-all"
                                                             >
-                                                                <LucideIcons.Calendar size={16} />
-                                                            </button>
-                                                        </div>
-
-                                                        {selectedHarcirahPersonnelIds.has(p.id) && (
-                                                            <div className="mt-2 pt-2 border-t border-forest-600 animate-fade-in">
-                                                                <div className="text-[9px] font-bold text-forest-400 uppercase mb-1 flex justify-between">
-                                                                    <span>Görev Günleri</span>
-                                                                    <span className="text-forest-200">{selectedHarcirahDates[p.id]?.size || 0} GÜN</span>
+                                                                <div className="flex items-center space-x-3 flex-1 min-w-0">
+                                                                    {/* Select/Deselect checkbox */}
+                                                                    <div 
+                                                                        onClick={(e) => {
+                                                                            e.stopPropagation();
+                                                                            toggleHarcirahPerson(p.id);
+                                                                        }}
+                                                                        className={`w-5 h-5 rounded-md border flex items-center justify-center transition-all cursor-pointer shrink-0 ${
+                                                                            isSelected ? 'bg-green-600 border-green-500 text-white' : 'border-forest-600 hover:border-forest-400 bg-forest-950/50'
+                                                                        }`}
+                                                                    >
+                                                                        {isSelected && <LucideIcons.Check size={14} className="stroke-[3]" />}
+                                                                    </div>
+                                                                    <div className="min-w-0">
+                                                                        <div className="text-sm font-bold text-white tracking-wide truncate">{p.fullName}</div>
+                                                                        <div className="text-[10px] text-forest-400 uppercase tracking-widest truncate mt-0.5">
+                                                                            {getDisplayTitle(p.title, p.role)}
+                                                                        </div>
+                                                                    </div>
                                                                 </div>
-                                                                <div className="flex flex-wrap gap-1">
-                                                                    {getDaysInRange(selectedHarcirahRange.start, selectedHarcirahRange.end).map(date => {
-                                                                        const dStr = normalizeDate(date);
-                                                                        const isSelected = selectedHarcirahDates[p.id]?.has(dStr);
-                                                                        const isWeekend = date.getDay() === 0 || date.getDay() === 6;
-                                                                        return (
-                                                                            <button 
-                                                                                key={dStr}
-                                                                                onClick={(e) => { e.stopPropagation(); toggleHarcirahDate(p.id, dStr); }}
-                                                                                className={`text-[9px] w-6 h-6 flex items-center justify-center rounded border transition-all ${isSelected ? 'bg-forest-500 border-forest-400 text-white' : 'bg-forest-900 border-forest-800 text-forest-500'} ${isWeekend ? 'opacity-80' : ''}`}
-                                                                                title={dStr}
-                                                                            >
-                                                                                {date.getDate()}
-                                                                            </button>
-                                                                        );
-                                                                    })}
+                                                                
+                                                                <div className="flex items-center space-x-2 shrink-0 ml-2">
+                                                                    <span className={`text-xs px-2 py-0.5 rounded font-bold ${
+                                                                        isSelected ? 'bg-forest-950 text-forest-200 border border-forest-700' : 'bg-forest-950/80 text-forest-500 border border-forest-900/60'
+                                                                    }`}>
+                                                                        {displayedDays} GÜN
+                                                                    </span>
+                                                                    {isExpanded ? (
+                                                                        <LucideIcons.ChevronUp size={18} className="text-forest-400" />
+                                                                    ) : (
+                                                                        <LucideIcons.ChevronDown size={18} className="text-forest-400" />
+                                                                    )}
                                                                 </div>
                                                             </div>
-                                                        )}
-                                                    </div>
-                                                ))}
+
+                                                            {/* Collapsible area showing individual tasks stack one below another */}
+                                                            {isExpanded && (
+                                                                <div className="p-4 bg-forest-950/60 border-t border-forest-800/40 animate-slide-down space-y-3">
+                                                                    <div className="flex justify-between items-center mb-1">
+                                                                        <span className="text-[10px] font-bold text-forest-400 uppercase tracking-widest">GÖREV GİRİŞLERİ</span>
+                                                                        <button 
+                                                                            onClick={(e) => { 
+                                                                                e.stopPropagation(); 
+                                                                                const personUnit = (pers) => {
+                                                                                    if (YONETIM_NAMES.includes(pers.fullName)) return "YÖNETİM";
+                                                                                    if (pers.unit) return pers.unit;
+                                                                                    const titleUpper = (pers.title || '').toLocaleUpperCase('tr-TR');
+                                                                                    if (titleUpper.includes('BELL')) return "BELL-429";
+                                                                                    if (titleUpper.includes('C-650')) return "C-650";
+                                                                                    if (titleUpper.includes('B-360')) return "B-360";
+                                                                                    if (titleUpper.includes('T-70')) return "T-70";
+                                                                                    if (titleUpper.includes('AT-802')) return "AT-802";
+                                                                                    if (titleUpper.includes('TEKNİ') || titleUpper.includes('UÇAK')) return "TEKNİK EKİP";
+                                                                                    if (titleUpper.includes('MEMUR') || titleUpper.includes('İŞÇİ') || titleUpper.includes('MÜHENDİS') || titleUpper.includes('ŞÖFÖR') || [Role.DRIVER, Role.CLEANING, Role.KITCHEN, Role.TEA_SERVICE, Role.OTHER].includes(pers.role)) return "YER DESTEK";
+                                                                                    return "İDARİ";
+                                                                                };
+                                                                                setFullAttendanceParams({ 
+                                                                                    model: personUnit(p), 
+                                                                                    start: selectedHarcirahRange.start, 
+                                                                                    end: selectedHarcirahRange.end, 
+                                                                                    searchName: p.fullName 
+                                                                                });
+                                                                                setShowFullAttendanceModal(true);
+                                                                            }}
+                                                                            className="flex items-center space-x-1 text-[10px] text-orange-400 hover:text-orange-300 transition-colors uppercase font-bold"
+                                                                        >
+                                                                            <LucideIcons.Calendar size={12} />
+                                                                            <span>Yoklama Göster</span>
+                                                                        </button>
+                                                                    </div>
+
+                                                                    {personBlocks.length > 0 ? (
+                                                                        <div className="space-y-3">
+                                                                            {personBlocks.map((block, bIdx) => {
+                                                                                const d1 = new Date(`${block.start}T12:00:00`);
+                                                                                const d2 = new Date(`${block.end}T12:00:00`);
+                                                                                const blockDays = Math.round((d2 - d1) / (1000 * 60 * 60 * 24)) + 1;
+                                                                                
+                                                                                const datesInBlock = getDaysInRange(block.start, block.end).map(d => normalizeDate(d));
+                                                                                const isBlockSel = datesInBlock.every(d => selectedHarcirahDates[p.id]?.has(d));
+                                                                                const spanLabel = getBlockSpanLabel(block, selectedHarcirahRange.monthKey);
+                                                                                
+                                                                                return (
+                                                                                    <div 
+                                                                                        key={bIdx}
+                                                                                        className="bg-forest-950/30 border border-forest-900 rounded-lg p-3 space-y-3"
+                                                                                    >
+                                                                                        {/* Block Header Row */}
+                                                                                        <div 
+                                                                                            onClick={(e) => {
+                                                                                                e.stopPropagation();
+                                                                                                toggleHarcirahBlock(p.id, block);
+                                                                                            }}
+                                                                                            className={`p-2.5 rounded-md border text-xs flex justify-between items-center cursor-pointer transition-all ${
+                                                                                                isBlockSel 
+                                                                                                    ? 'bg-forest-900/40 border-forest-700 text-white font-semibold' 
+                                                                                                    : 'bg-forest-950/45 border-forest-900/70 text-forest-400 hover:border-forest-800'
+                                                                                            }`}
+                                                                                        >
+                                                                                            <div className="flex items-center space-x-2.5">
+                                                                                                <div className={`w-4.5 h-4.5 rounded border flex items-center justify-center transition-all ${
+                                                                                                    isBlockSel ? 'bg-orange-600 border-orange-500 text-white' : 'border-forest-800 bg-forest-950/80'
+                                                                                                }`}>
+                                                                                                    {isBlockSel && <LucideIcons.Check size={12} className="stroke-[3]" />}
+                                                                                                </div>
+                                                                                                <div className="flex flex-col">
+                                                                                                    <span className="font-bold text-forest-100">
+                                                                                                        {d1.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long' })}
+                                                                                                    </span>
+                                                                                                    <span className="text-[10px] opacity-75">
+                                                                                                        - {d2.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' })}
+                                                                                                    </span>
+                                                                                                    {spanLabel && (
+                                                                                                        <span className="text-[10px] text-orange-400 font-semibold italic mt-1">
+                                                                                                            {spanLabel}
+                                                                                                        </span>
+                                                                                                    )}
+                                                                                                </div>
+                                                                                            </div>
+                                                                                            <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+                                                                                                isBlockSel ? 'bg-orange-950 text-orange-300 border border-orange-800/40' : 'bg-forest-950 text-forest-500 border border-forest-900'
+                                                                                            }`}>
+                                                                                                {blockDays} Gün
+                                                                                            </span>
+                                                                                        </div>
+
+                                                                                        {/* Kare Takvim (Square Calendar) */}
+                                                                                        <div className="space-y-1.5">
+                                                                                            <div className="text-[9px] font-extrabold text-forest-400 tracking-wider flex justify-between items-center px-1">
+                                                                                                <span>GÜN SEÇİMİ (KARE TAKVİM)</span>
+                                                                                                <span className="text-[8px] text-forest-500 font-semibold uppercase italic">(Seçmek veya bırakmak için tıklayın)</span>
+                                                                                            </div>
+                                                                                            <div className="grid grid-cols-7 sm:grid-cols-8 md:grid-cols-10 gap-1.5">
+                                                                                                {datesInBlock.map(dStr => {
+                                                                                                    const dObj = new Date(`${dStr}T12:00:00`);
+                                                                                                    const dayNum = dObj.getDate();
+                                                                                                    const monthName = dObj.toLocaleDateString('tr-TR', { month: 'short' });
+                                                                                                    const isSameMonth = dStr.startsWith(selectedHarcirahRange.monthKey);
+                                                                                                    const isDateSelected = selectedHarcirahDates[p.id]?.has(dStr);
+                                                                                                    
+                                                                                                    let cellClass = "";
+                                                                                                    if (isDateSelected) {
+                                                                                                        if (isSameMonth) {
+                                                                                                            cellClass = "bg-green-600 border-green-500 text-white font-black hover:bg-green-500 active:scale-95 shadow-[0_0_8px_rgba(22,163,74,0.3)]";
+                                                                                                        } else {
+                                                                                                            cellClass = "bg-orange-600 border-orange-500 text-white font-black hover:bg-orange-500 active:scale-95 shadow-[0_0_8px_rgba(234,88,12,0.3)]";
+                                                                                                        }
+                                                                                                    } else {
+                                                                                                        cellClass = "bg-forest-950/60 border-forest-900 text-forest-500 hover:text-forest-300 hover:bg-forest-900/40 hover:border-forest-750";
+                                                                                                    }
+                                                                                                    
+                                                                                                    return (
+                                                                                                        <button
+                                                                                                            key={dStr}
+                                                                                                            type="button"
+                                                                                                            onClick={(e) => {
+                                                                                                                e.stopPropagation();
+                                                                                                                toggleHarcirahDate(p.id, dStr);
+                                                                                                            }}
+                                                                                                            className={`aspect-square rounded-md border flex flex-col items-center justify-center p-1 transition-all text-center select-none cursor-pointer ${cellClass}`}
+                                                                                                            title={dObj.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' })}
+                                                                                                        >
+                                                                                                            <span className="text-xs tracking-tight font-extrabold leading-none">{dayNum}</span>
+                                                                                                            <span className="text-[7.5px] uppercase tracking-wider opacity-85 mt-0.5 leading-none font-bold">{monthName}</span>
+                                                                                                        </button>
+                                                                                                    );
+                                                                                                })}
+                                                                                            </div>
+                                                                                        </div>
+                                                                                    </div>
+                                                                                );
+                                                                            })}
+                                                                        </div>
+                                                                    ) : (
+                                                                        <div className="text-center text-[10px] text-forest-500 italic py-2">
+                                                                            Bu ayda görev kaydı bulunmamaktadır.
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })}
                                             </div>
                                         </div>
                                     )}
