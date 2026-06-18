@@ -2956,29 +2956,44 @@
             };
 
             useEffect(() => {
-                setLoading(true);
-                storageService.preload()
-                    .then(() => loadDashboardData())
-                    .then(() => setLoading(false))
-                    .catch(e => {
-                        console.error(e);
-                        setLoading(false);
-                    });
+                const acLocal = localStorage.getItem('ogm_aircraft');
+                const plLocal = localStorage.getItem('ogm_personnel');
+                
+                if (acLocal && plLocal) {
+                    // Load cached data synchronously first so there is NO waiting delay!
+                    memoryCache.aircraft = localData.getAircraft();
+                    memoryCache.personnel = localData.getPersonnel();
+                    memoryCache.attendance = localData.getAttendance();
+                    memoryCache.loaded = true;
+                    
+                    loadDashboardData();
+                    setLoading(false); // Do not show the loader, because we have cache!
+                    
+                    // Fetch data silently in the background so that any new records are updated
+                    storageService.preload()
+                        .then(() => loadDashboardData())
+                        .catch(e => console.warn("Background preload silent fail", e));
+                } else {
+                    // First time loading - show the loader as there's no cached data
+                    setLoading(true);
+                    storageService.preload()
+                        .then(() => loadDashboardData())
+                        .then(() => setLoading(false))
+                        .catch(e => {
+                            console.error(e);
+                            setLoading(false);
+                        });
+                }
             }, [loadDashboardData]);
 
             const handleBackToDashboard = async () => {
-                setLoading(true);
+                setSelModel(null);
+                setIsOrderChanged(false);
                 try {
                     await storageService.refresh();
                     await loadDashboardData();
-                    setSelModel(null);
-                    setIsOrderChanged(false);
                 } catch (e) {
-                    alert("Veriler güncellenirken bir hata oluştu, lütfen sayfayı yenileyiniz.");
-                    console.error(e);
-                    setSelModel(null);
-                } finally {
-                    setLoading(false);
+                    console.warn("Background refresh silent fail", e);
                 }
             };
 
@@ -4224,12 +4239,12 @@
             const [isAuthenticated, setIsAuthenticated] = useState(false);
             const [curtainOpen, setCurtainOpen] = useState(false);
             const [curtainHidden, setCurtainHidden] = useState(false);
-            useEffect(() => { const timer = setTimeout(() => { setCurtainOpen(true); setTimeout(() => setCurtainHidden(true), 1000); }, 2000); return () => clearTimeout(timer); }, []);
+            useEffect(() => { const timer = setTimeout(() => { setCurtainOpen(true); setTimeout(() => setCurtainHidden(true), 700); }, 1000); return () => clearTimeout(timer); }, []);
             const handleLoginSuccess = () => { setIsAuthenticated(true); setView('admin'); };
             const handleLogout = () => { setIsAuthenticated(false); setView('attendance'); };
             return (
                 <div className="min-h-screen pb-10">
-                    <div id="curtain" className={`fixed top-0 left-0 w-full h-full bg-forest-800 z-[9999] flex flex-col items-center justify-center transition-transform duration-1000 ease-in-out ${curtainOpen ? '-translate-y-full' : 'translate-y-0'} ${curtainHidden ? 'hidden' : ''}`}>
+                    <div id="curtain" className={`fixed top-0 left-0 w-full h-full bg-forest-800 z-[9999] flex flex-col items-center justify-center transition-transform duration-700 ease-in-out ${curtainOpen ? '-translate-y-full' : 'translate-y-0'} ${curtainHidden ? 'hidden' : ''}`}>
                         <div className="w-96 h-96 rounded-full overflow-hidden border-8 border-forest-400 shadow-[0_0_40px_rgba(0,0,0,0.6)] mb-8"><img src="https://media4.giphy.com/media/v1.Y2lkPTc5MGI3NjExNW9uenhqZXdxbGd6YWNxc2UwempmOXNyaG15NGtuZTJmb3EyaTNqZCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9cw/1rrxPs1nb3IjwmbiXw/giphy.gif" className="w-full h-full object-cover" alt="Loading" /></div>
                         <h1 className="text-5xl md:text-6xl font-bold text-white tracking-wider text-center px-4">BAKIM ŞUBE YOKLAMA</h1>
                     </div>
