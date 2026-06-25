@@ -2532,8 +2532,8 @@
             return dates;
         };
 
-        const ReportDialog = ({ type, onClose, personnel, attendance }) => {
-            const today = getTodayString();
+        const ReportDialog = ({ type, onClose, personnel, attendance, reportUnit, reportSearch, selectedDate }) => {
+            const today = selectedDate || getTodayString();
             const todayObj = new Date(today + 'T12:00:00');
             const isTodayWeekend = todayObj.getDay() === 0 || todayObj.getDay() === 6;
 
@@ -2553,9 +2553,29 @@
             };
 
             const filteredPersonnel = personnel.filter(p => {
-                const isSeparated = p.activeUntil && today > p.activeUntil;
-                const isYerDestek = getPUnit(p) === "YER DESTEK";
-                return !isSeparated && !isYerDestek;
+                const isSeparated = (p.activeUntil && today > p.activeUntil) || (p.activeFrom && today < p.activeFrom);
+                if (isSeparated) return false;
+
+                const unit = getPUnit(p);
+
+                // 1. If searching for a specific person by name, bypass Unit filters
+                if (reportSearch && reportSearch.trim() !== '') {
+                    const searchLower = reportSearch.toLocaleUpperCase('tr-TR').trim();
+                    if (!p.fullName || !p.fullName.toLocaleUpperCase('tr-TR').includes(searchLower)) {
+                        return false;
+                    }
+                    return true;
+                }
+
+                // 2. If no name search, apply unit filters
+                if (reportUnit && reportUnit !== 'TÜM BİRİMLER') {
+                    if (unit !== reportUnit) return false;
+                } else {
+                    // Default behavior when no specific unit is selected: exclude "YER DESTEK"
+                    if (unit === 'YER DESTEK') return false;
+                }
+
+                return true;
             });
 
             const resolvePersonStatus = (p, dateStr, attendanceList) => {
@@ -2598,7 +2618,7 @@
                                 {type === 'FMİ' && 'FAZLA MESAİ İZNİ (GÜNLÜK)'}
                                 {type === 'GÖREV' && 'GÖREV DURUMU (GÜNLÜK)'}
                             </h2>
-                            <p className="text-forest-400 text-xs sm:text-sm font-medium">{new Date().toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric', weekday: 'long' })}</p>
+                            <p className="text-forest-400 text-xs sm:text-sm font-medium">{new Date(today + 'T12:00:00').toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric', weekday: 'long' })}</p>
                        </div>
                     </div>
                     <button onClick={onClose} className="absolute sm:relative top-4 right-4 sm:top-0 sm:right-0 bg-white/10 hover:bg-red-600 text-white p-2 sm:p-3 rounded-full transition-all duration-300 group shadow-lg">
@@ -3654,6 +3674,18 @@
                     let targetP = [...finalPersonnel];
                     const startDateForFilter = isDaily ? getTodayString() : dates.start, endDateForFilter = isDaily ? getTodayString() : dates.end;
                     targetP = targetP.filter(p => !(p.activeUntil && p.activeUntil < startDateForFilter) && !(p.activeFrom && p.activeFrom > endDateForFilter));
+
+                    // Unit selection filter
+                    if (reportUnit && reportUnit !== 'TÜM BİRİMLER') {
+                        targetP = targetP.filter(p => fUK(p) === reportUnit);
+                    }
+
+                    // Personnel name search filter
+                    if (reportSearch && reportSearch.trim() !== '') {
+                        const searchLower = reportSearch.toLocaleUpperCase('tr-TR').trim();
+                        targetP = targetP.filter(p => p.fullName && p.fullName.toLocaleUpperCase('tr-TR').includes(searchLower));
+                    }
+
                     targetP.sort((a, b) => { 
                         const uA = fUK(a); 
                         const uB = fUK(b); 
@@ -4034,6 +4066,9 @@
                             onClose={() => setReportModalType(null)} 
                             personnel={allPersonnel} 
                             attendance={allRecs} 
+                            reportUnit={reportUnit}
+                            reportSearch={reportSearch}
+                            selectedDate={dates.start}
                         />
                     )}
                 </div>
