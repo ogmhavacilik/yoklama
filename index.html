@@ -562,7 +562,7 @@
 
         // Card Component
         const Card = ({ children, title, className = '' }) => (
-            <div className={`bg-forest-900 border border-forest-700 shadow-xl rounded-lg overflow-hidden ${className}`}>
+            <div className={`bg-forest-900 border border-forest-700 shadow-xl rounded-lg overflow-hidden relative ${className}`}>
                 {title && (
                     <div className="bg-forest-950 px-4 py-3 border-b border-forest-700 font-semibold text-forest-50">
                         {title}
@@ -2892,6 +2892,12 @@
             const autoSaveTimerRef = useRef(null);
             const countdownIntervalRef = useRef(null);
             const saveRef = useRef(null);
+            const savePromiseRef = useRef(null);
+            const hasUnsavedChangesRef = useRef(false);
+
+            useEffect(() => {
+                hasUnsavedChangesRef.current = hasUnsavedChanges;
+            }, [hasUnsavedChanges]);
 
             const triggerAutoSaveCountdown = useCallback(() => {
                 setHasUnsavedChanges(true);
@@ -2956,10 +2962,12 @@
                 }
 
                 setInv(updatedAc);
-                const uniqueModels = [...new Set(updatedAc.map(a => a.model))].filter(m => m && m.length > 1 && m !== 'e').sort();
+                const uniqueModels = [...new Set(updatedAc.map(a => a.model))].filter(m => m && m.length > 1 && m !== 'e' && m !== 'İDARİ BİRİM' && m !== 'İDARİ').sort();
                 setModels(uniqueModels);
                 setAllPersonnel(syncedPl || pl);
-                setAllRecs(recs || []);
+                if (!hasUnsavedChangesRef.current && !savePromiseRef.current) {
+                    setAllRecs(recs || []);
+                }
 
                 const finalPersonnel = syncedPl || pl;
                 if (finalPersonnel.length > 0) {
@@ -3045,9 +3053,14 @@
             });
 
             const handleUnitSelection = async (unit) => {
-                if (hasUnsavedChanges) {
+                if (isSaving || hasUnsavedChanges || savePromiseRef.current) {
+                    setSaveVerifiedMsg("Veri kaydediliyor, lütfen bekleyiniz...");
                     try {
-                        await save(true);
+                        if (savePromiseRef.current) {
+                            await savePromiseRef.current;
+                        } else if (hasUnsavedChanges) {
+                            await save(true);
+                        }
                     } catch (e) {
                         console.error("Auto save before unit switch error:", e);
                     }
@@ -3100,9 +3113,14 @@
             }, [loadDashboardData]);
 
             const handleBackToDashboard = async () => {
-                if (hasUnsavedChanges) {
+                if (isSaving || hasUnsavedChanges || savePromiseRef.current) {
+                    setSaveVerifiedMsg("Veri kaydediliyor, lütfen bekleyiniz...");
                     try {
-                        await save(true);
+                        if (savePromiseRef.current) {
+                            await savePromiseRef.current;
+                        } else if (hasUnsavedChanges) {
+                            await save(true);
+                        }
                     } catch (e) {
                         console.error("Auto save before back to dashboard error:", e);
                     }
@@ -3265,6 +3283,10 @@
             }, [selModel, searchName, allPersonnel, rangeStartDate, rangeEndDate, models]);
 
             useEffect(() => {
+                if (hasUnsavedChangesRef.current || isSaving || savePromiseRef.current) {
+                    return;
+                }
+
                 const next = {};
                 const referenceDate = rangeStartDate;
                 const dObj = new Date(referenceDate); 
@@ -3333,12 +3355,18 @@
             }, [people, allRecs, rangeStartDate]);
 
             const save = async (isAutoSave = false) => {
-                if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
-                if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
-                setAutoSaveCountdown(null);
+                if (savePromiseRef.current) {
+                    setSaveVerifiedMsg("Veri kaydediliyor, lütfen bekleyiniz...");
+                    return savePromiseRef.current;
+                }
 
-                setIsSaving(true);
-                setSaveVerifiedMsg("Veriler e-tabloya gönderiliyor ve doğrulanıyor...");
+                const runSave = async () => {
+                    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+                    if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+                    setAutoSaveCountdown(null);
+
+                    setIsSaving(true);
+                    setSaveVerifiedMsg("Veri kaydediliyor, lütfen bekleyiniz...");
 
                 const days = getDaysInRange(rangeStartDate, rangeEndDate);
                 const dayStrings = days.map(d => normalizeDate(d));
@@ -3547,6 +3575,14 @@
                 }
             };
 
+            savePromiseRef.current = runSave();
+            try {
+                await savePromiseRef.current;
+            } finally {
+                savePromiseRef.current = null;
+            }
+        };
+
             const handleAttendanceChange = (pid, status) => {
                 setAtt(prev => ({ 
                     ...prev, 
@@ -3571,14 +3607,15 @@
 
                 
             // SECURITY WRAPPERS
-            const handleUnlock = (e) => {
+            const handleUnlock = async (e) => {
                 e.preventDefault();
                 if (unlockPassword === '1839') {
                     setIsEditUnlocked(true);
                     setShowUnlockModal(false);
                     if (pendingAction) {
-                        pendingAction();
+                        const action = pendingAction;
                         setPendingAction(null);
+                        await action();
                     }
                 } else {
                     alert('Hatalı şifre!');
@@ -3586,6 +3623,7 @@
             };
 
             const handleStatusChangeWithAuth = (pid, status) => {
+                if (isSaving || !!savePromiseRef.current) return;
                 if (isEditUnlocked) {
                     handleAttendanceChange(pid, status);
                 } else {
@@ -3595,6 +3633,7 @@
             };
 
             const handleDetailChangeWithAuth = (pid, field, value) => {
+                if (isSaving || !!savePromiseRef.current) return;
                 if (isEditUnlocked) {
                     handleDetailChange(pid, field, value);
                 } else {
@@ -3604,6 +3643,7 @@
             };
 
             const openDetailModalWithAuth = async (person) => {
+                if (isSaving || !!savePromiseRef.current) return;
                 if (isEditUnlocked) {
                     await openDetailModal(person);
                 } else {
@@ -3618,9 +3658,14 @@
                 setAutoSaveCountdown(null);
 
                 let freshRecs = allRecs;
-                if (hasUnsavedChanges) {
+                if (isSaving || hasUnsavedChanges || savePromiseRef.current) {
+                    setSaveVerifiedMsg("Veri kaydediliyor, lütfen bekleyiniz...");
                     try {
-                        await save(true);
+                        if (savePromiseRef.current) {
+                            await savePromiseRef.current;
+                        } else if (hasUnsavedChanges) {
+                            await save(true);
+                        }
                         freshRecs = storageService.getAttendanceSync();
                     } catch (e) {
                         console.error("Auto save before openDetailModal failed", e);
@@ -4189,7 +4234,7 @@
                                 <Users className="mb-2" /> YÖNETİM
                                 {dashboardStatus['YÖNETİM']?.missing && <span className="text-[10px] bg-red-600 px-2 py-0.5 rounded mt-2 animate-pulse w-full block">YOKLAMA GİRİLMEDİ</span>}
                             </button>
-                            {models.map(m => {
+                            {models.filter(m => m !== 'İDARİ BİRİM' && m !== 'İDARİ').map(m => {
                                 const stat = dashboardStatus[m] || { pilotMissing: false, techMissing: false, groundMissing: false };
                                 const hasIssue = stat.pilotMissing || stat.techMissing || stat.groundMissing;
                                 return (
@@ -4202,9 +4247,11 @@
                             )})}
                         </div>
                         {isUnitsLoading && (
-                            <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/20 rounded z-10">
-                                <LucideIcons.RefreshCw className="animate-spin text-teal-400 mb-2" size={32} />
-                                <span className="text-sm font-semibold text-teal-200 bg-forest-900/90 px-3 py-1 rounded border border-teal-500 shadow-lg">Veriler e-tablodan yükleniyor...</span>
+                            <div className="absolute inset-0 flex flex-col items-center justify-center bg-forest-950/70 rounded z-20 backdrop-blur-sm">
+                                <Loader2 className="animate-spin text-teal-400 mb-3" size={36} />
+                                <span className="text-base font-bold text-teal-200 bg-forest-900/90 px-4 py-2 rounded-lg border border-teal-500 shadow-xl animate-pulse">
+                                    Birim Yoklama Verileri E-Tablodan Yükleniyor...
+                                </span>
                             </div>
                         )}
                     </Card>
@@ -4240,7 +4287,7 @@
                                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
                                      <div>
                                         <label className="text-xs text-forest-400 block mb-1">Birim Seçimi</label>
-                                        <select className="w-full bg-forest-950 border border-forest-600 text-white rounded p-2 text-sm" value={reportUnit} onChange={(e) => setReportUnit(e.target.value)}><option value="TÜM BİRİMLER">TÜM BİRİMLER</option><option value="YÖNETİM">YÖNETİM</option>{models.map(m => <option key={m} value={m}>{m}</option>)}</select>
+                                        <select className="w-full bg-forest-950 border border-forest-600 text-white rounded p-2 text-sm" value={reportUnit} onChange={(e) => setReportUnit(e.target.value)}><option value="TÜM BİRİMLER">TÜM BİRİMLER</option><option value="YÖNETİM">YÖNETİM</option>{models.filter(m => m !== 'İDARİ BİRİM' && m !== 'İDARİ').map(m => <option key={m} value={m}>{m}</option>)}</select>
                                      </div>
                                      <div>
                                         <label className="text-xs text-forest-400 block mb-1">Personel Arama</label>
@@ -4286,11 +4333,11 @@
                             </div>
                         </div>
                     )}
-                    <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center mb-4 text-white bg-forest-700/50 p-4 rounded border border-forest-600 gap-4 sticky top-4 z-50 shadow-lg backdrop-blur-md bg-forest-700/90">
+                    <div className={`flex flex-col lg:flex-row justify-between items-start lg:items-center mb-4 text-white bg-forest-700/50 p-4 rounded border border-forest-600 gap-4 sticky top-4 z-50 shadow-lg backdrop-blur-md bg-forest-700/90 ${(isSaving || savePromiseRef.current) ? 'pointer-events-none opacity-50 select-none' : ''}`}>
                         <div className="flex items-center gap-4">
                             <h2 className="text-xl font-bold flex items-center gap-2"><ModelIcon model={selModel} category={inv.find(a => a.model === selModel)?.category} /> {selModel}</h2>
                             {isOrderChanged && (
-                                <button onClick={saveOrder} className="bg-orange-600 hover:bg-orange-500 text-white px-3 py-1 rounded text-xs font-bold animate-pulse flex items-center gap-1">
+                                <button onClick={saveOrder} disabled={isSaving || !!savePromiseRef.current} className="bg-orange-600 hover:bg-orange-500 text-white px-3 py-1 rounded text-xs font-bold animate-pulse flex items-center gap-1 disabled:opacity-50">
                                     <Save size={14} /> Sıralamayı Kaydet
                                 </button>
                             )}
@@ -4301,12 +4348,13 @@
                                 <input 
                                     type="text" 
                                     placeholder="Personel Ara..." 
-                                    className="bg-forest-900 border border-forest-500 rounded p-1.5 pl-8 text-sm text-white w-48 focus:ring-1 focus:ring-forest-400 outline-none" 
+                                    disabled={isSaving || !!savePromiseRef.current}
+                                    className="bg-forest-900 border border-forest-500 rounded p-1.5 pl-8 text-sm text-white w-48 focus:ring-1 focus:ring-forest-400 outline-none disabled:opacity-50" 
                                     value={searchName || ''} 
                                     onChange={(e) => setSearchName(e.target.value)} 
                                 />
                                 {searchName && (
-                                    <button onClick={() => setSearchName(null)} className="absolute right-2 top-2.5 text-forest-400 hover:text-white">
+                                    <button onClick={() => setSearchName(null)} disabled={isSaving || !!savePromiseRef.current} className="absolute right-2 top-2.5 text-forest-400 hover:text-white">
                                         <X size={14} />
                                     </button>
                                 )}
@@ -4314,37 +4362,61 @@
                             <div className="flex flex-col">
                                 <label className="text-[10px] text-forest-400 uppercase font-bold">Tarih Aralığı</label>
                                 <div className="flex items-center gap-1">
-                                    <input type="date" value={rangeStartDate} onChange={async (e) => {
+                                    <input type="date" disabled={isSaving || !!savePromiseRef.current} value={rangeStartDate} onChange={async (e) => {
                                         const newStart = e.target.value;
-                                        if (hasUnsavedChanges) {
-                                            try { await save(true); } catch(err) {}
+                                        if (isSaving || hasUnsavedChanges || savePromiseRef.current) {
+                                            setSaveVerifiedMsg("Veri kaydediliyor, lütfen bekleyiniz...");
+                                            try {
+                                                if (savePromiseRef.current) {
+                                                    await savePromiseRef.current;
+                                                } else if (hasUnsavedChanges) {
+                                                    await save(true);
+                                                }
+                                            } catch(err) {}
                                         }
                                         setRangeStartDate(newStart);
-                                    }} className="bg-forest-900 text-white p-1 rounded border border-forest-500 text-sm w-28" />
+                                    }} className="bg-forest-900 text-white p-1 rounded border border-forest-500 text-sm w-28 disabled:opacity-50" />
                                     <span className="text-forest-500">-</span>
-                                    <input type="date" value={rangeEndDate} onChange={async (e) => {
+                                    <input type="date" disabled={isSaving || !!savePromiseRef.current} value={rangeEndDate} onChange={async (e) => {
                                         const newEnd = e.target.value;
-                                        if (hasUnsavedChanges) {
-                                            try { await save(true); } catch(err) {}
+                                        if (isSaving || hasUnsavedChanges || savePromiseRef.current) {
+                                            setSaveVerifiedMsg("Veri kaydediliyor, lütfen bekleyiniz...");
+                                            try {
+                                                if (savePromiseRef.current) {
+                                                    await savePromiseRef.current;
+                                                } else if (hasUnsavedChanges) {
+                                                    await save(true);
+                                                }
+                                            } catch(err) {}
                                         }
                                         setRangeEndDate(newEnd);
-                                    }} className="bg-forest-900 text-white p-1 rounded border border-forest-500 text-sm w-28" />
+                                    }} className="bg-forest-900 text-white p-1 rounded border border-forest-500 text-sm w-28 disabled:opacity-50" />
                                 </div>
                             </div>
-                            <Button variant="secondary" onClick={handleBackToDashboard} className="h-9">EKRANA DÖN</Button>
+                            <Button variant="secondary" onClick={handleBackToDashboard} disabled={isSaving || !!savePromiseRef.current} className="h-9 disabled:opacity-50">EKRANA DÖN</Button>
                         </div>
                     </div>
                     {rangeStartDate !== rangeEndDate && (<div className="bg-blue-900/40 border border-blue-700 p-3 rounded-lg flex items-center text-blue-200 text-sm mb-4 animate-fade-in"><strong>DİKKAT:</strong> Seçtiğiniz durumlar {rangeStartDate} ile {rangeEndDate} arasındaki TÜM GÜNLERE uygulanacaktır.</div>)}
                     <Card title="Personel Listesi">
-                         <div className="grid gap-4">
-                            {[...pilots, ...others].map((p, i) => renderPersonRow(p, i))}
+                         <div className="relative">
+                             <div className={`grid gap-4 transition-all duration-300 ${(isSaving || savePromiseRef.current) ? 'blur-[2px] opacity-60 pointer-events-none select-none' : ''}`}>
+                                {[...pilots, ...others].map((p, i) => renderPersonRow(p, i))}
+                            </div>
+                            {(isSaving || savePromiseRef.current) && (
+                                <div className="absolute inset-0 bg-forest-950/70 backdrop-blur-sm rounded-lg flex flex-col items-center justify-center z-30 p-4">
+                                    <Loader2 size={36} className="animate-spin text-teal-400 mb-3" />
+                                    <span className="text-white font-bold text-base bg-forest-900/90 border border-teal-500/60 px-5 py-2.5 rounded-xl shadow-2xl animate-pulse">
+                                        Veri kaydediliyor, lütfen bekleyiniz...
+                                    </span>
+                                </div>
+                            )}
                         </div>
                     </Card>
                   
                     <div className="sticky bottom-0 bg-forest-950 p-4 border-t border-forest-700 flex flex-col items-center gap-2 mt-4 z-40">
                         {saveVerifiedMsg && (
-                            <div className={`w-full max-w-md p-3 rounded-lg text-sm text-center flex items-center justify-center gap-2 font-medium shadow-lg animate-fade-in ${saveVerifiedMsg.includes('✓') ? 'bg-emerald-600 text-white border border-emerald-400' : 'bg-amber-600 text-white border border-amber-400'}`}>
-                                <CheckCircle2 size={18} />
+                            <div className={`w-full max-w-md p-3 rounded-lg text-sm text-center flex items-center justify-center gap-2 font-medium shadow-lg animate-fade-in ${saveVerifiedMsg.includes('✓') ? 'bg-emerald-600 text-white border border-emerald-400' : 'bg-amber-600 text-white border border-amber-400 animate-pulse'}`}>
+                                {isSaving ? <Loader2 className="animate-spin text-white" size={18} /> : <CheckCircle2 size={18} />}
                                 <span>{saveVerifiedMsg}</span>
                             </div>
                         )}
