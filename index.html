@@ -461,38 +461,48 @@
                 return memoryCache.attendance || localData.getAttendance();
             },
             saveAttendance: async (data) => {
-                // 1. Send data to backend / Google Sheets
+                const updatedFullList = localData.saveAttendance(data);
+                memoryCache.attendance = updatedFullList;
                 await apiCall('save_attendance', { records: data });
 
-                // 2. Verification Step: Read back from Google Sheets to ensure data presence
-                const remoteAttendance = await apiCall('get_attendance');
-                const formattedRemote = remoteAttendance.map(r => ({
-                    ...r,
-                    id: String(r.id),
-                    personId: String(r.personId),
-                    date: normalizeDate(r.date),
-                    status: r.status === 'İzinli' ? 'İzin' : r.status
-                })).filter(r => r.status && r.status !== '');
+                try {
+                    const remoteAttendance = await apiCall('get_attendance');
+                    if (Array.isArray(remoteAttendance)) {
+                        const formattedRemote = remoteAttendance.map(r => ({
+                            ...r,
+                            id: String(r.id),
+                            personId: String(r.personId),
+                            date: normalizeDate(r.date),
+                            status: r.status === 'İzinli' ? 'İzin' : r.status
+                        })).filter(r => r.status && r.status !== '');
 
-                // Verify non-delete records sent in 'data' exist in Google Sheets
-                const nonDeleteRecords = data.filter(r => r.status && r.status !== '');
-                if (nonDeleteRecords.length > 0) {
-                    const missing = nonDeleteRecords.filter(savedRec => {
-                        return !formattedRemote.some(r => 
-                            r.personId === savedRec.personId && 
-                            r.date === savedRec.date && 
-                            r.status === savedRec.status
-                        );
-                    });
-                    if (missing.length > 0) {
-                        throw new Error('Veri e-tabloya gönderildi ancak e-tabloda bulunamadı! (Arka plana kaydedilemedi)');
+                        const nonDeleteRecords = data.filter(r => r.status && r.status !== '');
+                        if (nonDeleteRecords.length > 0) {
+                            const missing = nonDeleteRecords.filter(savedRec => {
+                                return !formattedRemote.some(r => 
+                                    r.personId === savedRec.personId && 
+                                    r.date === savedRec.date && 
+                                    r.status === savedRec.status
+                                );
+                            });
+                            if (missing.length > 0) {
+                                throw new Error('Veri e-tabloya gönderildi ancak e-tabloda bulunamadı! (Arka plana kaydedilemedi)');
+                            }
+                        }
+
+                        localData.setAttendance(formattedRemote);
+                        memoryCache.attendance = formattedRemote;
+                        memoryCache.loaded = true;
+                        return formattedRemote;
                     }
+                } catch(e) {
+                    if (e.message && e.message.includes('bulunamadı')) {
+                        throw e;
+                    }
+                    console.warn("Verification warning:", e);
                 }
 
-                localData.setAttendance(formattedRemote);
-                memoryCache.attendance = formattedRemote;
-                memoryCache.loaded = true;
-                return formattedRemote;
+                return updatedFullList;
             },
             fetchSafeImage: async (fileId) => {
                 if (window.photoCache[fileId]) return window.photoCache[fileId];
@@ -568,8 +578,10 @@
             Trash2, XCircle, ArrowUp, ArrowDown, UserMinus, MapPin, Search, 
             AlertCircle, Users, Globe, Calendar, MessageSquare, CheckCircle, 
             BarChart3, Activity, FileText, Loader2, Plus, Edit2, MoreVertical, 
-            CalendarDays, Lock, BookOpen, Camera, Upload, Image: ImageIcon, User, Save
+            CalendarDays, Lock, BookOpen, Camera, Upload, Image: ImageIcon, User, Save,
+            RefreshCw, CheckCircle2
         } = LucideIcons;
+        const CheckIcon = CheckCircle2 || CheckCircle;
 
         const ModelIcon = ({ category, model, className }) => {
             if (model === AircraftModel.YER_DESTEK) return <Truck className={className} />;
@@ -2821,22 +2833,11 @@
             const [allRecs, setAllRecs] = useState([]);
             const [allPersonnel, setAllPersonnel] = useState([]);
             const [dashboardStatus, setDashboardStatus] = useState({});
-            const [isUnitsLoading, setIsUnitsLoading] = useState(true);
 
             const [people, setPeople] = useState([]);
             const [att, setAtt] = useState({});
             const [loading, setLoading] = useState(true);
             const [isOrderChanged, setIsOrderChanged] = useState(false);
-
-            // Auto-Save and Verification States
-            const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
-            const [autoSaveCountdown, setAutoSaveCountdown] = useState(null);
-            const [isSaving, setIsSaving] = useState(false);
-            const [saveVerifiedMsg, setSaveVerifiedMsg] = useState(null);
-
-            const autoSaveTimerRef = useRef(null);
-            const countdownIntervalRef = useRef(null);
-            const saveRef = useRef(null);
 
             // Tab State
             const [activeTab, setActiveTab] = useState('PILOT');
@@ -2881,7 +2882,17 @@
             const [showSyncDetails, setShowSyncDetails] = useState(false);
             const [isSyncing, setIsSyncing] = useState(false);
 
-            // Auto-Save Countdown Handler (5 seconds)
+            // Units Loading & Auto-save States
+            const [isUnitsLoading, setIsUnitsLoading] = useState(true);
+            const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+            const [autoSaveCountdown, setAutoSaveCountdown] = useState(null);
+            const [isSaving, setIsSaving] = useState(false);
+            const [saveVerifiedMsg, setSaveVerifiedMsg] = useState(null);
+
+            const autoSaveTimerRef = useRef(null);
+            const countdownIntervalRef = useRef(null);
+            const saveRef = useRef(null);
+
             const triggerAutoSaveCountdown = useCallback(() => {
                 setHasUnsavedChanges(true);
                 setSaveVerifiedMsg(null);
@@ -2912,119 +2923,135 @@
             const loadDashboardData = useCallback(async () => {
                 setIsUnitsLoading(true);
                 try {
-                    const [ac, pl, [recs, syncedPl]] = await Promise.all([
-                        storageService.getAircraft(),
-                        storageService.getPersonnel(),
-                        Promise.all([
-                            storageService.getAttendanceSync(),
-                            storageService.getPersonnelSync()
-                        ])
-                    ]);
+                const [ac, pl, [recs, syncedPl]] = await Promise.all([
+                    storageService.getAircraft(),
+                    storageService.getPersonnel(),
+                    Promise.all([
+                        storageService.getAttendanceSync(),
+                        storageService.getPersonnelSync()
+                    ])
+                ]);
 
-                    let updatedAc = [...ac];
-                    const oldUnitIndex = updatedAc.findIndex(a => a.model === 'TEKNİK EKİP VE DESTEK');
-                    let modified = false;
+                // DATA MIGRATION: Remove old combined unit and ensure new ones exist
+                let updatedAc = [...ac];
+                const oldUnitIndex = updatedAc.findIndex(a => a.model === 'TEKNİK EKİP VE DESTEK');
+                let modified = false;
+                
+                if (oldUnitIndex !== -1) {
+                    updatedAc.splice(oldUnitIndex, 1);
+                    modified = true;
+                }
+                
+                if (!updatedAc.find(a => a.model === AircraftModel.TEKNIK_EKIP)) {
+                    updatedAc.push({ id: '24', tailNumber: 'MERKEZ', model: AircraftModel.TEKNIK_EKIP, category: AircraftCategory.TECHNICAL, city: 'Ankara' });
+                    modified = true;
+                }
+                if (!updatedAc.find(a => a.model === AircraftModel.YER_DESTEK)) {
+                    updatedAc.push({ id: '25', tailNumber: 'DESTEK', model: AircraftModel.YER_DESTEK, category: AircraftCategory.GROUND, city: 'Ankara' });
+                    modified = true;
+                }
+
+                if (modified) {
+                    storageService.saveAircraft(updatedAc);
+                }
+
+                setInv(updatedAc);
+                const uniqueModels = [...new Set(updatedAc.map(a => a.model))].filter(m => m && m.length > 1 && m !== 'e').sort();
+                setModels(uniqueModels);
+                setAllPersonnel(syncedPl || pl);
+                setAllRecs(recs || []);
+
+                const finalPersonnel = syncedPl || pl;
+                if (finalPersonnel.length > 0) {
+                    const statusMap = {};
+                    const today = getTodayString();
                     
-                    if (oldUnitIndex !== -1) {
-                        updatedAc.splice(oldUnitIndex, 1);
-                        modified = true;
-                    }
-                    
-                    if (!updatedAc.find(a => a.model === AircraftModel.TEKNIK_EKIP)) {
-                        updatedAc.push({ id: '24', tailNumber: 'MERKEZ', model: AircraftModel.TEKNIK_EKIP, category: AircraftCategory.TECHNICAL, city: 'Ankara' });
-                        modified = true;
-                    }
-                    if (!updatedAc.find(a => a.model === AircraftModel.YER_DESTEK)) {
-                        updatedAc.push({ id: '25', tailNumber: 'DESTEK', model: AircraftModel.YER_DESTEK, category: AircraftCategory.GROUND, city: 'Ankara' });
-                        modified = true;
-                    }
+                    const specificAircraftTags = uniqueModels
+                        .filter(m => m !== AircraftModel.YER_DESTEK && m !== AircraftModel.TEKNIK_EKIP && m !== AircraftModel.IDARI_BIRIM)
+                        .map(m => m.replace(/[^a-zA-Z0-9ğüşıöçĞÜŞİÖÇ]/g, '').toLocaleUpperCase('tr-TR'));
 
-                    if (modified) {
-                        storageService.saveAircraft(updatedAc);
-                    }
-
-                    setInv(updatedAc);
-                    const uniqueModels = [...new Set(updatedAc.map(a => a.model))].filter(m => m && m.length > 1 && m !== 'e').sort();
-                    setModels(uniqueModels);
-                    setAllPersonnel(syncedPl || pl);
-                    setAllRecs(recs || []);
-
-                    const finalPersonnel = syncedPl || pl;
-                    if (finalPersonnel.length > 0) {
-                        const statusMap = {};
-                        const today = getTodayString();
+                    uniqueModels.forEach(m => {
+                        const mNameNormalized = m.replace(/[^a-zA-Z0-9ğüşıöçĞÜŞİÖÇ]/g, '').toLocaleUpperCase('tr-TR');
                         
-                        const specificAircraftTags = uniqueModels
-                            .filter(m => m !== AircraftModel.YER_DESTEK && m !== AircraftModel.TEKNIK_EKIP && m !== AircraftModel.IDARI_BIRIM)
-                            .map(m => m.replace(/[^a-zA-Z0-9ğüşıöçĞÜŞİÖÇ]/g, '').toLocaleUpperCase('tr-TR'));
+                        const relevantPersonnel = finalPersonnel.filter(p => {
+                            // EXCLUDE MANAGEMENT NAMES FROM REGULAR AIRCRAFT LISTS
+                            if (YONETIM_NAMES.includes(p.fullName)) return false;
 
-                        uniqueModels.forEach(m => {
-                            const mNameNormalized = m.replace(/[^a-zA-Z0-9ğüşıöçĞÜŞİÖÇ]/g, '').toLocaleUpperCase('tr-TR');
-                            
-                            const relevantPersonnel = finalPersonnel.filter(p => {
-                                if (YONETIM_NAMES.includes(p.fullName)) return false;
+                            const pStart = p.activeFrom || '2000-01-01';
+                            const pEnd = p.activeUntil || '2099-12-31';
+                            if (today < pStart || today > pEnd) return false;
 
-                                const pStart = p.activeFrom || '2000-01-01';
-                                const pEnd = p.activeUntil || '2099-12-31';
-                                if (today < pStart || today > pEnd) return false;
+                            // 1. PRIORITIZE EXPLICIT UNIT ASSIGNMENT
+                            if (p.unit) {
+                                return p.unit === m;
+                            }
 
-                                if (p.unit) {
-                                    return p.unit === m;
-                                }
+                            // 2. FALLBACK TO TITLE/ROLE MATCHING
+                            const titleUpper = (p.title || '').toLocaleUpperCase('tr-TR');
+                            const role = p.role;
+                            const tClean = titleUpper.replace(/[^a-zA-Z0-9ğüşıöçĞÜŞİÖÇ]/g, '');
 
-                                const titleUpper = (p.title || '').toLocaleUpperCase('tr-TR');
-                                const role = p.role;
-                                const tClean = titleUpper.replace(/[^a-zA-Z0-9ğüşıöçĞÜŞİÖÇ]/g, '');
+                            const belongsToSpecificAircraft = specificAircraftTags.some(tag => tClean.includes(tag));
 
-                                const belongsToSpecificAircraft = specificAircraftTags.some(tag => tClean.includes(tag));
+                            if (m === AircraftModel.YER_DESTEK) {
+                                if (p.fullName.includes('SERKAN KOTAN')) return true; // Force include SERKAN KOTAN
+                                if (belongsToSpecificAircraft) return false; 
+                                const isTechnicalRole = titleUpper.includes('UÇAK TEKNİ') || titleUpper.includes('MÜHENDİS');
+                                if (isTechnicalRole) return false;
 
-                                if (m === AircraftModel.YER_DESTEK) {
-                                    if (p.fullName.includes('SERKAN KOTAN')) return true;
-                                    if (belongsToSpecificAircraft) return false; 
-                                    const isTechnicalRole = titleUpper.includes('UÇAK TEKNİ') || titleUpper.includes('MÜHENDİS');
-                                    if (isTechnicalRole) return false;
-
-                                    const isGroundRole = [Role.DRIVER, Role.CLEANING, Role.KITCHEN, Role.TEA_SERVICE, Role.OTHER].includes(role);
-                                    const isGroundTitle = titleUpper.includes('MEMUR') || titleUpper.includes('İŞÇİ') || titleUpper.includes('ŞÖFÖR');
-                                    return isGroundRole || isGroundTitle;
-                                } else if (m === AircraftModel.TEKNIK_EKIP) {
-                                    if (p.fullName.includes('SERKAN KOTAN')) return false;
-                                    if (belongsToSpecificAircraft) return false;
-                                    return titleUpper.includes('UÇAK TEKNİ') || titleUpper.includes('MÜHENDİS');
-                                } else {
-                                    return tClean.includes(mNameNormalized);
-                                }
-                            });
-
-                            const pilots = relevantPersonnel.filter(p => p.role === Role.PILOT || (p.title && p.title.toLocaleUpperCase('tr-TR').includes('PİLOT')));
-                            const techs = relevantPersonnel.filter(p => !pilots.includes(p));
-
-                            const pilotDataExists = pilots.length > 0 && pilots.some(p => (recs || []).some(r => r.date === today && r.personId === p.id));
-                            const techDataExists = techs.length > 0 && techs.some(p => (recs || []).some(r => r.date === today && r.personId === p.id));
-                            const groundDataExists = relevantPersonnel.length > 0 && relevantPersonnel.some(p => (recs || []).some(r => r.date === today && r.personId === p.id));
-
-                            const isGroundUnit = m === AircraftModel.YER_DESTEK;
-                            const isTechnicalUnit = m === AircraftModel.TEKNIK_EKIP;
-
-                            statusMap[m] = {
-                                pilotMissing: !isGroundUnit && !isTechnicalUnit && pilots.length > 0 && !pilotDataExists,
-                                techMissing: (!isGroundUnit && techs.length > 0 && !techDataExists) || (isTechnicalUnit && !techDataExists),
-                                groundMissing: isGroundUnit && !groundDataExists
-                            };
+                                const isGroundRole = [Role.DRIVER, Role.CLEANING, Role.KITCHEN, Role.TEA_SERVICE, Role.OTHER].includes(role);
+                                const isGroundTitle = titleUpper.includes('MEMUR') || titleUpper.includes('İŞÇİ') || titleUpper.includes('ŞÖFÖR');
+                                return isGroundRole || isGroundTitle;
+                            } else if (m === AircraftModel.TEKNIK_EKIP) {
+                                if (p.fullName.includes('SERKAN KOTAN')) return false; // Force exclude SERKAN KOTAN
+                                if (belongsToSpecificAircraft) return false;
+                                return titleUpper.includes('UÇAK TEKNİ') || titleUpper.includes('MÜHENDİS');
+                            } else {
+                                return tClean.includes(mNameNormalized);
+                            }
                         });
 
-                        const yonetimMembers = finalPersonnel.filter(p => YONETIM_NAMES.includes(p.fullName));
-                        const yonetimHasData = yonetimMembers.some(p => (recs || []).some(r => r.date === today && r.personId === p.id));
-                        statusMap['YÖNETİM'] = { missing: !yonetimHasData && yonetimMembers.length > 0 };
+                        const pilots = relevantPersonnel.filter(p => p.role === Role.PILOT || (p.title && p.title.toLocaleUpperCase('tr-TR').includes('PİLOT')));
+                        const techs = relevantPersonnel.filter(p => !pilots.includes(p));
 
-                        setDashboardStatus(statusMap);
-                    }
+                        const pilotDataExists = pilots.length > 0 && pilots.some(p => (recs || []).some(r => r.date === today && r.personId === p.id));
+                        const techDataExists = techs.length > 0 && techs.some(p => (recs || []).some(r => r.date === today && r.personId === p.id));
+                        const groundDataExists = relevantPersonnel.length > 0 && relevantPersonnel.some(p => (recs || []).some(r => r.date === today && r.personId === p.id));
+
+                        const isGroundUnit = m === AircraftModel.YER_DESTEK;
+                        const isTechnicalUnit = m === AircraftModel.TEKNIK_EKIP;
+
+                        statusMap[m] = {
+                            pilotMissing: !isGroundUnit && !isTechnicalUnit && pilots.length > 0 && !pilotDataExists,
+                            techMissing: (!isGroundUnit && techs.length > 0 && !techDataExists) || (isTechnicalUnit && !techDataExists),
+                            groundMissing: isGroundUnit && !groundDataExists
+                        };
+                    });
+
+                    // Check YONETIM Status
+                    const yonetimMembers = finalPersonnel.filter(p => YONETIM_NAMES.includes(p.fullName));
+                    const yonetimHasData = yonetimMembers.some(p => (recs || []).some(r => r.date === today && r.personId === p.id));
+                    statusMap['YÖNETİM'] = { missing: !yonetimHasData && yonetimMembers.length > 0 };
+
+                    setDashboardStatus(statusMap);
+                }
                 } finally {
                     setIsUnitsLoading(false);
                 }
             }, []);
 
+            useEffect(() => {
+                saveRef.current = save;
+            });
+
             const handleUnitSelection = async (unit) => {
+                if (hasUnsavedChanges) {
+                    try {
+                        await save(true);
+                    } catch (e) {
+                        console.error("Auto save before unit switch error:", e);
+                    }
+                }
                 setSelModel(unit);
                 if (unit === AircraftModel.TEKNIK_EKIP || unit === AircraftModel.YER_DESTEK) {
                     try {
@@ -3073,6 +3100,13 @@
             }, [loadDashboardData]);
 
             const handleBackToDashboard = async () => {
+                if (hasUnsavedChanges) {
+                    try {
+                        await save(true);
+                    } catch (e) {
+                        console.error("Auto save before back to dashboard error:", e);
+                    }
+                }
                 setSelModel(null);
                 setIsOrderChanged(false);
                 try {
@@ -3310,6 +3344,8 @@
                 const dayStrings = days.map(d => normalizeDate(d));
                 const isWeeklyMode = rangeStartDate !== rangeEndDate;
 
+                // Determine which people have "mixed/detailed" records (Blurred rows)
+                // We must skip saving for them to prevent overwriting detailed data with bulk data.
                 const personsToSkip = new Set();
                 if (isWeeklyMode) {
                     people.forEach(p => {
@@ -3345,6 +3381,7 @@
                     const dStr = normalizeDate(dateObj);
                     const dayOfWeek = dateObj.getDay();
                     const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+                    
                     const isFriday = dayOfWeek === 5;
 
                     people.forEach(p => {
@@ -3372,15 +3409,17 @@
                                 counter++;
                                 recs.push({
                                     ...existingRec,
-                                    status: '' // Reset to HT (Delete record)
+                                    status: '' 
                                 });
                             }
                             return;
                         }
 
                         const dType = s.dutyType || DutyType.PLANNED;
+                        
                         const isPlannedDuty = s.status === AttendanceStatus.DUTY && dType === DutyType.PLANNED;
                         const isOvertimeLeave = s.status === AttendanceStatus.LEAVE && s.leaveType === LeaveType.OVERTIME;
+                        
                         const shouldIncludeWeekend = isPlannedDuty || isOvertimeLeave;
 
                         if (isFriday) {
@@ -3391,7 +3430,7 @@
                              const existingSun = allRecs.find(r => r.personId === p.id && r.date === sunStr && r.status && r.status !== '');
                              
                              const hasWeekendJunk = (existingSat && existingSat.status && existingSat.status !== '') || 
-                                                    (existingSun && existingSun.status && existingSun.status !== '');
+                                                     (existingSun && existingSun.status && existingSun.status !== '');
 
                              if (hasWeekendJunk && (!shouldIncludeWeekend || !s.includeWeekend)) {
                                  counter++;
@@ -3399,7 +3438,7 @@
                                     id: `${timestamp}-${counter}-cleanup-sat-${p.id}`,
                                     date: satStr,
                                     personId: p.id,
-                                    status: '',
+                                    status: '', 
                                     aircraftTypeSnapshot: selModel || undefined
                                  });
                                  counter++;
@@ -3407,7 +3446,7 @@
                                     id: `${timestamp}-${counter}-cleanup-sun-${p.id}`,
                                     date: sunStr,
                                     personId: p.id,
-                                    status: '',
+                                    status: '', 
                                     aircraftTypeSnapshot: selModel || undefined
                                  });
                              }
@@ -3480,8 +3519,12 @@
                 if (recs.length === 0) {
                     setIsSaving(false);
                     setHasUnsavedChanges(false);
-                    setSaveVerifiedMsg("Kaydedilecek yeni değişiklik yok.");
-                    setTimeout(() => setSaveVerifiedMsg(null), 3000);
+                    if (!isAutoSave) {
+                        setSaveVerifiedMsg("Kaydedilecek yeni değişiklik yok.");
+                        setTimeout(() => setSaveVerifiedMsg(null), 3000);
+                    } else {
+                        setSaveVerifiedMsg(null);
+                    }
                     return;
                 }
 
@@ -3498,15 +3541,11 @@
                 } catch (e) {
                     console.error("Save Error", e);
                     setSaveVerifiedMsg(null);
-                    alert('Sistem arka plana kaydedilemedi hatası: ' + (e.message || 'E-tabloya yazma/doğrulama başarısız oldu.'));
+                    alert('Sistem e-tabloya kaydedilemedi hatası: ' + (e.message || 'E-tabloya yazma/doğrulama başarısız oldu.'));
                 } finally {
                     setIsSaving(false);
                 }
             };
-
-            useEffect(() => {
-                saveRef.current = save;
-            });
 
             const handleAttendanceChange = (pid, status) => {
                 setAtt(prev => ({ 
@@ -3528,128 +3567,6 @@
             const handleDetailChange = (pid, field, value) => {
                 setAtt(prev => ({ ...prev, [pid]: { ...prev[pid], [field]: value } }));
                 triggerAutoSaveCountdown();
-            };
-
-            const handleModalDayChange = (dateStr, field, value) => {
-                setDetailDays(prev => {
-                    const next = {
-                        ...prev,
-                        [dateStr]: { ...prev[dateStr], [field]: value }
-                    };
-
-                    const dObj = new Date(dateStr);
-                    if (dObj.getDay() === 5 && next[dateStr].status === AttendanceStatus.DUTY) {
-                        const satDate = new Date(dObj); satDate.setDate(satDate.getDate() + 1); const satStr = normalizeDate(satDate);
-                        const sunDate = new Date(dObj); sunDate.setDate(sunDate.getDate() + 2); const sunStr = normalizeDate(sunDate);
-                        
-                        if (next[satStr]) {
-                            next[satStr] = { ...next[satStr], [field]: value };
-                        }
-                        if (next[sunStr]) {
-                            next[sunStr] = { ...next[sunStr], [field]: value };
-                        }
-                    }
-                    return next;
-                });
-                triggerAutoSaveCountdown();
-            };
-
-            const handleModalStatusChange = (dateStr, status) => {
-                setDetailDays(prev => {
-                    const next = {
-                        ...prev,
-                        [dateStr]: {
-                            ...prev[dateStr],
-                            status,
-                            dutyLocation: (status === AttendanceStatus.DUTY || status === AttendanceStatus.COURSE) ? (prev[dateStr]?.dutyLocation || '') : undefined,
-                            dutyLocationDetail: status === AttendanceStatus.DUTY ? (prev[dateStr]?.dutyLocationDetail || '') : undefined,
-                            dutyType: status === AttendanceStatus.DUTY ? (prev[dateStr]?.dutyType || DutyType.PLANNED) : undefined,
-                            leaveType: status === AttendanceStatus.LEAVE ? (prev[dateStr]?.leaveType || LeaveType.DAILY) : undefined,
-                            includeWeekend: status === AttendanceStatus.DUTY ? true : (prev[dateStr]?.includeWeekend || false),
-                            note: status === AttendanceStatus.OTHER ? prev[dateStr]?.note : undefined
-                        }
-                    };
-
-                    const dObj = new Date(dateStr);
-                    if (dObj.getDay() === 5 && status === AttendanceStatus.DUTY) {
-                        const satDate = new Date(dObj); satDate.setDate(satDate.getDate() + 1); const satStr = normalizeDate(satDate);
-                        const sunDate = new Date(dObj); sunDate.setDate(sunDate.getDate() + 2); const sunStr = normalizeDate(sunStr);
-                        
-                        if (next[satStr]) {
-                            next[satStr] = { ...next[dateStr], date: satStr };
-                        }
-                        if (next[sunStr]) {
-                            next[sunStr] = { ...next[dateStr], date: sunStr };
-                        }
-                    }
-
-                    return next;
-                });
-                triggerAutoSaveCountdown();
-            };
-
-            const saveModal = async () => {
-                if (!detailPerson) return;
-                setIsSaving(true);
-                setSaveVerifiedMsg("Detaylı günlük veriler e-tabloya gönderiliyor ve doğrulanıyor...");
-                const recs = [];
-                let counter = 0;
-                const timestamp = Date.now();
-                
-                Object.keys(detailDays).forEach(dStr => {
-                    const s = detailDays[dStr];
-                    if (s.status === undefined || s.status === '') {
-                        const existingRec = allRecs.find(r => r.personId === detailPerson.id && r.date === dStr);
-                        if (existingRec) {
-                            counter++;
-                            recs.push({
-                                ...existingRec,
-                                status: '' 
-                            });
-                        }
-                        return;
-                    }
-
-                    counter++;
-                    recs.push({
-                        id: `${timestamp}-${counter}-${detailPerson.id}`,
-                        date: dStr,
-                        personId: detailPerson.id,
-                        status: s.status,
-                        dutyLocation: s.dutyLocation,
-                        dutyLocationDetail: s.dutyLocationDetail,
-                        leaveType: s.leaveType,
-                        note: s.note,
-                        dutyType: s.dutyType,
-                        includeWeekend: !!s.includeWeekend,
-                        aircraftTypeSnapshot: selModel || undefined
-                    });
-                });
-
-                try {
-                    await storageService.saveAttendance(recs);
-                    // Also trigger unit page save if there are unsaved unit changes
-                    if (hasUnsavedChanges && saveRef.current) {
-                        await saveRef.current(true);
-                    } else {
-                        await storageService.refresh();
-                        await loadDashboardData();
-                        const freshRecs = storageService.getAttendanceSync();
-                        setAllRecs(freshRecs);
-                        if (onSaveExternal) onSaveExternal(freshRecs);
-                    }
-                    setHasUnsavedChanges(false);
-                    setSaveVerifiedMsg("Veri gönderildi, e-tabloda varlığı doğrulandı ve kaydedildi! ✓");
-                    setTimeout(() => setSaveVerifiedMsg(null), 4000);
-                } catch(e) {
-                    console.error("Save Modal Error", e);
-                    setSaveVerifiedMsg(null);
-                    alert('Sistem arka plana kaydedilemedi hatası: ' + (e.message || 'Detaylı giriş e-tabloya yazılamadı.'));
-                } finally {
-                    setDetailModalOpen(false);
-                    setDetailPerson(null);
-                    setIsSaving(false);
-                }
             };
 
                 
@@ -3686,31 +3603,69 @@
                 }
             };
 
-            const openDetailModalWithAuth = (person) => {
+            const openDetailModalWithAuth = async (person) => {
                 if (isEditUnlocked) {
-                    openDetailModal(person);
+                    await openDetailModal(person);
                 } else {
                     setPendingAction(() => () => openDetailModal(person));
                     setShowUnlockModal(true);
                 }
             };
 
-            const openDetailModal = (person) => {
+            const openDetailModal = async (person) => {
+                if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+                if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+                setAutoSaveCountdown(null);
+
+                let freshRecs = allRecs;
+                if (hasUnsavedChanges) {
+                    try {
+                        await save(true);
+                        freshRecs = storageService.getAttendanceSync();
+                    } catch (e) {
+                        console.error("Auto save before openDetailModal failed", e);
+                    }
+                }
+
                 setDetailPerson(person);
-                const days = getDaysInRange(rangeStartDate, rangeEndDate);
+
+                let days = getDaysInRange(rangeStartDate, rangeEndDate);
+                if (rangeStartDate === rangeEndDate) {
+                    const [y, m, d] = rangeStartDate.split('-').map(Number);
+                    const curr = new Date(y, m - 1, d, 12, 0, 0);
+                    const dayOfWeek = curr.getDay();
+                    const diffToMon = (dayOfWeek === 0) ? -6 : (1 - dayOfWeek);
+                    const monDate = new Date(curr);
+                    monDate.setDate(curr.getDate() + diffToMon);
+                    const sunDate = new Date(monDate);
+                    sunDate.setDate(monDate.getDate() + 6);
+                    days = getDaysInRange(normalizeDate(monDate), normalizeDate(sunDate));
+                }
+
                 const initialStates = {};
 
                 days.forEach(d => {
                     const dStr = normalizeDate(d);
-                    const r = allRecs.find(rec => rec.personId === person.id && rec.date === dStr && rec.status && rec.status !== '');
+                    const r = freshRecs.find(rec => rec.personId === person.id && rec.date === dStr && rec.status && rec.status !== '');
                     const isWe = d.getDay() === 0 || d.getDay() === 6;
+                    const validStatuses = Object.values(AttendanceStatus);
 
-                    if (r) {
+                    if (r && r.status && validStatuses.includes(r.status)) {
                         initialStates[dStr] = { ...r };
+                    } else if (dStr === rangeStartDate && att[person.id] && att[person.id].status) {
+                        initialStates[dStr] = {
+                            status: att[person.id].status,
+                            dutyLocation: att[person.id].dutyLocation,
+                            dutyLocationDetail: att[person.id].dutyLocationDetail,
+                            leaveType: att[person.id].leaveType,
+                            note: att[person.id].note,
+                            dutyType: att[person.id].dutyType,
+                            includeWeekend: att[person.id].includeWeekend
+                        };
                     } else {
                         const prevDate = new Date(d); prevDate.setDate(prevDate.getDate() - 1);
                         const prevStr = normalizeDate(prevDate);
-                        const prevRec = initialStates[prevStr] || allRecs.find(rec => rec.personId === person.id && rec.date === prevStr && rec.status && rec.status !== '');
+                        const prevRec = initialStates[prevStr] || freshRecs.find(rec => rec.personId === person.id && rec.date === prevStr && rec.status && rec.status !== '');
 
                         if (isWe) {
                             initialStates[dStr] = { status: undefined };
@@ -3724,6 +3679,171 @@
                 setDetailModalOpen(true);
             };
 
+            const handleModalDayChange = (dateStr, field, value) => {
+                setDetailDays(prev => {
+                    const next = {
+                        ...prev,
+                        [dateStr]: { ...prev[dateStr], [field]: value }
+                    };
+
+                    const dObj = new Date(dateStr);
+                    if (dObj.getDay() === 5 && next[dateStr].status === AttendanceStatus.DUTY) {
+                        const satDate = new Date(dObj); satDate.setDate(satDate.getDate() + 1); const satStr = normalizeDate(satDate);
+                        const sunDate = new Date(dObj); sunDate.setDate(sunDate.getDate() + 2); const sunStr = normalizeDate(sunDate);
+                        
+                        if (next[satStr]) {
+                            next[satStr] = { ...next[satStr], [field]: value };
+                        }
+                        if (next[sunStr]) {
+                            next[sunStr] = { ...next[sunStr], [field]: value };
+                        }
+                    }
+                    return next;
+                });
+            };
+
+            const handleModalStatusChange = (dateStr, status) => {
+                setDetailDays(prev => {
+                    const next = {
+                        ...prev,
+                        [dateStr]: {
+                            ...prev[dateStr],
+                            status,
+                            dutyLocation: (status === AttendanceStatus.DUTY || status === AttendanceStatus.COURSE) ? (prev[dateStr]?.dutyLocation || '') : undefined,
+                            dutyLocationDetail: status === AttendanceStatus.DUTY ? (prev[dateStr]?.dutyLocationDetail || '') : undefined,
+                            dutyType: status === AttendanceStatus.DUTY ? (prev[dateStr]?.dutyType || DutyType.PLANNED) : undefined,
+                            leaveType: status === AttendanceStatus.LEAVE ? (prev[dateStr]?.leaveType || LeaveType.DAILY) : undefined,
+                            includeWeekend: status === AttendanceStatus.DUTY ? true : (prev[dateStr]?.includeWeekend || false),
+                            note: status === AttendanceStatus.OTHER ? prev[dateStr]?.note : undefined
+                        }
+                    };
+
+                    const dObj = new Date(dateStr);
+                    if (dObj.getDay() === 5 && status === AttendanceStatus.DUTY) {
+                        const satDate = new Date(dObj); satDate.setDate(satDate.getDate() + 1); const satStr = normalizeDate(satDate);
+                        const sunDate = new Date(dObj); sunDate.setDate(sunDate.getDate() + 2); const sunStr = normalizeDate(sunDate);
+                        
+                        if (next[satStr]) {
+                            next[satStr] = { ...next[dateStr], date: satStr };
+                        }
+                        if (next[sunStr]) {
+                            next[sunStr] = { ...next[dateStr], date: sunStr };
+                        }
+                    }
+
+                    return next;
+                });
+            };
+
+            const saveModal = async () => {
+                if (!detailPerson) return;
+
+                if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+                if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+                setAutoSaveCountdown(null);
+
+                setIsSaving(true);
+                setSaveVerifiedMsg("Detaylı veriler e-tabloya gönderiliyor ve doğrulanıyor...");
+
+                const recs = [];
+                let counter = 0;
+                const timestamp = Date.now();
+
+                Object.keys(detailDays).forEach(dStr => {
+                    const s = detailDays[dStr];
+                    if (s.status === undefined || s.status === '') {
+                        const existingRec = allRecs.find(r => r.personId === detailPerson.id && r.date === dStr);
+                        if (existingRec) {
+                            counter++;
+                            recs.push({
+                                ...existingRec,
+                                status: '' 
+                            });
+                        }
+                        return;
+                    }
+
+                    counter++;
+                    const existingRec = allRecs.find(r => r.personId === detailPerson.id && r.date === dStr);
+                    recs.push({
+                        id: (existingRec && existingRec.id) ? existingRec.id : `${timestamp}-${counter}-${detailPerson.id}`,
+                        date: dStr,
+                        personId: detailPerson.id,
+                        status: s.status,
+                        dutyLocation: s.dutyLocation,
+                        dutyLocationDetail: s.dutyLocationDetail,
+                        leaveType: s.leaveType,
+                        note: s.note,
+                        dutyType: s.dutyType,
+                        includeWeekend: !!s.includeWeekend,
+                        aircraftTypeSnapshot: selModel || undefined
+                    });
+                });
+
+                let allRecordsToSave = [...recs];
+                if (hasUnsavedChanges) {
+                    const days = getDaysInRange(rangeStartDate, rangeEndDate);
+                    const dayStrings = days.map(d => normalizeDate(d));
+                    
+                    people.forEach(p => {
+                        if (p.id === detailPerson.id) return;
+                        const s = att[p.id];
+                        if (!s || s.status === undefined) return;
+                        
+                        dayStrings.forEach(dStr => {
+                            const isWe = new Date(dStr + 'T12:00:00').getDay() === 0 || new Date(dStr + 'T12:00:00').getDay() === 6;
+                            if (isWe && !s.includeWeekend) return;
+                            
+                            counter++;
+                            const existingRec = allRecs.find(r => r.personId === p.id && r.date === dStr);
+                            allRecordsToSave.push({
+                                id: (existingRec && existingRec.id) ? existingRec.id : `${timestamp}-${counter}-${p.id}`,
+                                date: dStr,
+                                personId: p.id,
+                                status: s.status,
+                                dutyLocation: s.dutyLocation,
+                                dutyLocationDetail: s.dutyLocationDetail,
+                                leaveType: s.leaveType,
+                                note: s.note,
+                                dutyType: s.dutyType,
+                                includeWeekend: !!s.includeWeekend,
+                                aircraftTypeSnapshot: selModel || undefined
+                            });
+                        });
+                    });
+                }
+
+                try {
+                    await storageService.saveAttendance(allRecordsToSave);
+                    await storageService.refresh();
+                    await loadDashboardData();
+                    const freshRecs = storageService.getAttendanceSync();
+                    setAllRecs(freshRecs);
+
+                    if (detailDays[rangeStartDate] && detailDays[rangeStartDate].status) {
+                        setAtt(prev => ({
+                            ...prev,
+                            [detailPerson.id]: {
+                                ...detailDays[rangeStartDate]
+                            }
+                        }));
+                    }
+
+                    if (onSaveExternal) onSaveExternal(freshRecs);
+                    setHasUnsavedChanges(false);
+                    setSaveVerifiedMsg("Veri gönderildi, e-tabloda varlığı doğrulandı ve kaydedildi! ✓");
+                    setTimeout(() => setSaveVerifiedMsg(null), 4000);
+                } catch(e) {
+                    console.error("Detail save error", e);
+                    setSaveVerifiedMsg(null);
+                    alert('Kayıt hatası: ' + (e.message || 'Detaylı veri kaydedilemedi.'));
+                } finally {
+                    setDetailModalOpen(false);
+                    setDetailPerson(null);
+                    setIsSaving(false);
+                }
+            };
+            
             // 7️⃣ CRITICAL FIX: ABSENTEE STATEMENT SPLIT LOGIC
             const exportExcel = async (isDaily = false) => {
                 setLoading(true);
@@ -4064,33 +4184,29 @@
                 <div className="container mx-auto p-4 max-w-5xl space-y-8 animate-fade-in relative">
                     <h1 className="text-3xl font-bold text-white mb-4">Yoklama Takip</h1>
                     <Card title="Birim Seçiniz">
-                        <div className={`relative transition-all duration-500 min-h-[160px] ${isUnitsLoading ? 'blur-sm opacity-50 pointer-events-none' : 'blur-0 opacity-100'}`}>
-                            {isUnitsLoading && (
-                                <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-forest-950/60 rounded-xl backdrop-blur-sm">
-                                    <Loader2 className="animate-spin text-teal-400 mb-2" size={32} />
-                                    <span className="text-xs font-bold text-teal-200 tracking-wider uppercase animate-pulse">
-                                        Birim Yoklama Verileri Yükleniyor...
-                                    </span>
-                                </div>
-                            )}
-                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                                 <button onClick={() => handleUnitSelection('YÖNETİM')} className={`p-6 rounded border-2 font-bold flex flex-col items-center transition-all group relative overflow-hidden ${!dashboardStatus['YÖNETİM']?.missing ? 'bg-teal-600 border-teal-400 hover:bg-teal-500 text-white' : 'bg-forest-800 border-forest-600 hover:bg-forest-700 text-white'}`}>
-                                    <Users className="mb-2" /> YÖNETİM
-                                    {dashboardStatus['YÖNETİM']?.missing && <span className="text-[10px] bg-red-600 px-2 py-0.5 rounded mt-2 animate-pulse w-full block">YOKLAMA GİRİLMEDİ</span>}
+                        <div className={`relative grid grid-cols-2 md:grid-cols-4 gap-4 transition-all duration-500 ${isUnitsLoading ? 'blur-md pointer-events-none select-none opacity-60' : ''}`}>
+                             <button onClick={() => handleUnitSelection('YÖNETİM')} className={`p-6 rounded border-2 font-bold flex flex-col items-center transition-all group relative overflow-hidden ${!dashboardStatus['YÖNETİM']?.missing ? 'bg-teal-600 border-teal-400 hover:bg-teal-500 text-white' : 'bg-forest-800 border-forest-600 hover:bg-forest-700 text-white'}`}>
+                                <Users className="mb-2" /> YÖNETİM
+                                {dashboardStatus['YÖNETİM']?.missing && <span className="text-[10px] bg-red-600 px-2 py-0.5 rounded mt-2 animate-pulse w-full block">YOKLAMA GİRİLMEDİ</span>}
+                            </button>
+                            {models.map(m => {
+                                const stat = dashboardStatus[m] || { pilotMissing: false, techMissing: false, groundMissing: false };
+                                const hasIssue = stat.pilotMissing || stat.techMissing || stat.groundMissing;
+                                return (
+                                <button key={m} onClick={() => handleUnitSelection(m)} className={`p-6 rounded border-2 font-bold flex flex-col items-center transition-all group relative overflow-hidden ${!hasIssue ? 'bg-teal-600 border-teal-400 hover:bg-teal-500 text-white' : 'bg-forest-800 border-forest-600 hover:bg-forest-700 text-white'}`}>
+                                    <ModelIcon category={inv.find(a => a.model === m)?.category} model={m} className="mb-2" /> {m}
+                                    {stat.groundMissing && <span className="text-[10px] bg-red-600 px-2 py-0.5 rounded mt-2 animate-pulse w-full block">YOKLAMA GİRİLMEDİ</span>}
+                                    {stat.pilotMissing && <span className="text-[10px] bg-orange-600 px-2 py-0.5 rounded mt-1 animate-pulse w-full block">PİLOT GİRİLMEDİ</span>}
+                                    {stat.techMissing && <span className="text-[10px] bg-red-600 px-2 py-0.5 rounded mt-1 animate-pulse w-full block">TEKNİSYEN GİRİLMEDİ</span>}
                                 </button>
-                                {models.map(m => {
-                                    const stat = dashboardStatus[m] || { pilotMissing: false, techMissing: false, groundMissing: false };
-                                    const hasIssue = stat.pilotMissing || stat.techMissing || stat.groundMissing;
-                                    return (
-                                    <button key={m} onClick={() => handleUnitSelection(m)} className={`p-6 rounded border-2 font-bold flex flex-col items-center transition-all group relative overflow-hidden ${!hasIssue ? 'bg-teal-600 border-teal-400 hover:bg-teal-500 text-white' : 'bg-forest-800 border-forest-600 hover:bg-forest-700 text-white'}`}>
-                                        <ModelIcon category={inv.find(a => a.model === m)?.category} model={m} className="mb-2" /> {m}
-                                        {stat.groundMissing && <span className="text-[10px] bg-red-600 px-2 py-0.5 rounded mt-2 animate-pulse w-full block">YOKLAMA GİRİLMEDİ</span>}
-                                        {stat.pilotMissing && <span className="text-[10px] bg-orange-600 px-2 py-0.5 rounded mt-1 animate-pulse w-full block">PİLOT GİRİLMEDİ</span>}
-                                        {stat.techMissing && <span className="text-[10px] bg-red-600 px-2 py-0.5 rounded mt-1 animate-pulse w-full block">TEKNİSYEN GİRİLMEDİ</span>}
-                                    </button>
-                                )})}
-                            </div>
+                            )})}
                         </div>
+                        {isUnitsLoading && (
+                            <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/20 rounded z-10">
+                                <LucideIcons.RefreshCw className="animate-spin text-teal-400 mb-2" size={32} />
+                                <span className="text-sm font-semibold text-teal-200 bg-forest-900/90 px-3 py-1 rounded border border-teal-500 shadow-lg">Veriler e-tablodan yükleniyor...</span>
+                            </div>
+                        )}
                     </Card>
 
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -4198,9 +4314,21 @@
                             <div className="flex flex-col">
                                 <label className="text-[10px] text-forest-400 uppercase font-bold">Tarih Aralığı</label>
                                 <div className="flex items-center gap-1">
-                                    <input type="date" value={rangeStartDate} onChange={e => setRangeStartDate(e.target.value)} className="bg-forest-900 text-white p-1 rounded border border-forest-500 text-sm w-28" />
+                                    <input type="date" value={rangeStartDate} onChange={async (e) => {
+                                        const newStart = e.target.value;
+                                        if (hasUnsavedChanges) {
+                                            try { await save(true); } catch(err) {}
+                                        }
+                                        setRangeStartDate(newStart);
+                                    }} className="bg-forest-900 text-white p-1 rounded border border-forest-500 text-sm w-28" />
                                     <span className="text-forest-500">-</span>
-                                    <input type="date" value={rangeEndDate} onChange={e => setRangeEndDate(e.target.value)} className="bg-forest-900 text-white p-1 rounded border border-forest-500 text-sm w-28" />
+                                    <input type="date" value={rangeEndDate} onChange={async (e) => {
+                                        const newEnd = e.target.value;
+                                        if (hasUnsavedChanges) {
+                                            try { await save(true); } catch(err) {}
+                                        }
+                                        setRangeEndDate(newEnd);
+                                    }} className="bg-forest-900 text-white p-1 rounded border border-forest-500 text-sm w-28" />
                                 </div>
                             </div>
                             <Button variant="secondary" onClick={handleBackToDashboard} className="h-9">EKRANA DÖN</Button>
@@ -4213,36 +4341,38 @@
                         </div>
                     </Card>
                   
-                    <div className="sticky bottom-0 bg-forest-950/95 p-4 border-t border-forest-700 flex flex-col items-center justify-center gap-2 mt-4 z-40 backdrop-blur-md">
+                    <div className="sticky bottom-0 bg-forest-950 p-4 border-t border-forest-700 flex flex-col items-center gap-2 mt-4 z-40">
                         {saveVerifiedMsg && (
-                            <div className={`text-xs sm:text-sm font-bold px-4 py-1.5 rounded-full animate-bounce shadow-lg ${
-                                saveVerifiedMsg.includes('hata') || saveVerifiedMsg.includes('başarısız') 
-                                    ? 'bg-red-900/90 text-red-200 border border-red-500'
-                                    : 'bg-emerald-900/90 text-emerald-200 border border-emerald-500'
-                            }`}>
-                                {saveVerifiedMsg}
+                            <div className={`w-full max-w-md p-3 rounded-lg text-sm text-center flex items-center justify-center gap-2 font-medium shadow-lg animate-fade-in ${saveVerifiedMsg.includes('✓') ? 'bg-emerald-600 text-white border border-emerald-400' : 'bg-amber-600 text-white border border-amber-400'}`}>
+                                <CheckCircle2 size={18} />
+                                <span>{saveVerifiedMsg}</span>
                             </div>
                         )}
                         <Button 
                             size="lg" 
                             onClick={() => save(false)} 
                             disabled={isSaving}
-                            className={`w-full max-w-md font-bold transition-all duration-300 shadow-xl ${
+                            className={`w-full max-w-md flex items-center justify-center gap-2 font-bold transition-all duration-300 ${
                                 hasUnsavedChanges 
-                                    ? 'opacity-80 bg-amber-700 hover:bg-amber-600 text-amber-100 border-2 border-amber-400 animate-pulse' 
-                                    : 'bg-forest-600 hover:bg-forest-500 text-white'
+                                    ? 'bg-amber-500 hover:bg-amber-600 text-black shadow-[0_0_20px_rgba(245,158,11,0.5)] border-2 border-amber-300 animate-pulse' 
+                                    : 'bg-emerald-600 hover:bg-emerald-500 text-white'
                             }`}
                         >
                             {isSaving ? (
-                                <span className="flex items-center justify-center gap-2">
-                                    <Loader2 className="animate-spin" size={18} /> E-Tabloda Doğrulanıyor ve Kaydediliyor...
-                                </span>
-                            ) : hasUnsavedChanges ? (
-                                <span>
-                                    DEĞİŞİKLİKLER VAR - Otomatik Kaydediliyor ({autoSaveCountdown !== null ? autoSaveCountdown : 5}s) [Şimdi Kaydet]
-                                </span>
+                                <>
+                                    <LucideIcons.RefreshCw size={18} className="animate-spin" />
+                                    <span>E-Tabloya Gönderiliyor & Doğrulanıyor...</span>
+                                </>
+                            ) : autoSaveCountdown !== null ? (
+                                <>
+                                    <Save size={18} />
+                                    <span>KAYDET ({autoSaveCountdown}s Sonra Otomatik Kaydedilecek)</span>
+                                </>
                             ) : (
-                                <span>KAYDET (Veriler E-Tabloda Doğrulandı)</span>
+                                <>
+                                    <Save size={18} />
+                                    <span>KAYDET</span>
+                                </>
                             )}
                         </Button>
                     </div>
@@ -4356,7 +4486,19 @@
                                         </div>
                                     )
                                 })}</div>
-                                <div className="p-4 border-t border-forest-700 bg-forest-950 flex justify-end gap-2"><Button variant="secondary" onClick={() => { setDetailModalOpen(false); setDetailPerson(null) }}>İptal</Button><Button onClick={saveModal}>Kaydet</Button></div>
+                                <div className="p-4 border-t border-forest-700 bg-forest-950 flex justify-end gap-2">
+                                    <Button variant="secondary" onClick={() => { setDetailModalOpen(false); setDetailPerson(null) }} disabled={isSaving}>İptal</Button>
+                                    <Button onClick={saveModal} disabled={isSaving} className="flex items-center gap-2">
+                                        {isSaving ? (
+                                            <>
+                                                <LucideIcons.RefreshCw size={16} className="animate-spin" />
+                                                <span>Kaydediliyor...</span>
+                                            </>
+                                        ) : (
+                                            <span>Kaydet</span>
+                                        )}
+                                    </Button>
+                                </div>
                             </div>
                         </div>
                     )}
