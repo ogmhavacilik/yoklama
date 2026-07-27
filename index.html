@@ -2906,7 +2906,7 @@
                 if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
                 if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
 
-                setAutoSaveCountdown(5);
+                setAutoSaveCountdown(15);
 
                 countdownIntervalRef.current = setInterval(() => {
                     setAutoSaveCountdown(prev => {
@@ -2922,7 +2922,7 @@
                     if (saveRef.current) {
                         saveRef.current(true);
                     }
-                }, 5000);
+                }, 15000);
             }, []);
 
             // Data Load
