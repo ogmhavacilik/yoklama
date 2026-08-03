@@ -386,12 +386,12 @@
             preload: async () => {
                 try {
                     const data = await apiCall('get_init_data');
-                    if (data.aircraft) {
+                    if (data && data.aircraft) {
                         const formattedAC = data.aircraft.map(a => ({ ...a, id: String(a.id) }));
                         localData.saveAircraft(formattedAC);
                         memoryCache.aircraft = formattedAC;
                     }
-                    if (data.personnel) {
+                    if (data && data.personnel) {
                         let formattedPL = data.personnel.map(p => {
                             // TC No için tüm olası anahtar varyasyonlarını tara (TC NO, TC no, tc_no, TC, tcNo vb.)
                             let foundTc = '';
@@ -426,16 +426,18 @@
                     }
 
                     const att = await apiCall('get_attendance');
-                    const formattedAtt = att.map(r => ({
-                        ...r,
-                        id: String(r.id),
-                        personId: String(r.personId),
-                        date: normalizeDate(r.date),
-                        status: r.status === 'İzinli' ? 'İzin' : r.status
-                    })).filter(r => r.status && r.status !== '');
+                    if (att && Array.isArray(att)) {
+                        const formattedAtt = att.map(r => ({
+                            ...r,
+                            id: String(r.id),
+                            personId: String(r.personId),
+                            date: normalizeDate(r.date),
+                            status: r.status === 'İzinli' ? 'İzin' : r.status
+                        })).filter(r => r.status && r.status !== '');
 
-                    localData.setAttendance(formattedAtt);
-                    memoryCache.attendance = formattedAtt;
+                        localData.setAttendance(formattedAtt);
+                        memoryCache.attendance = formattedAtt;
+                    }
                     memoryCache.loaded = true;
                 } catch (e) {
                     console.warn("Preload failed, using local", e);
@@ -3037,6 +3039,8 @@
 
                     setDashboardStatus(statusMap);
                 }
+                } catch (err) {
+                    console.error("Error loading dashboard data:", err);
                 } finally {
                     setIsUnitsLoading(false);
                 }
@@ -3047,6 +3051,7 @@
             });
 
             const handleUnitSelection = (unit) => {
+                if (isUnitsLoading) return;
                 if (hasUnsavedChanges) {
                     save(true);
                 }
@@ -3064,32 +3069,36 @@
             };
 
             useEffect(() => {
+                setIsUnitsLoading(true);
                 const acLocal = localStorage.getItem('ogm_aircraft');
                 const plLocal = localStorage.getItem('ogm_personnel');
                 
                 if (acLocal && plLocal) {
-                    // Load cached data synchronously first so there is NO waiting delay!
+                    // Load cached data synchronously first for instant initial display
                     memoryCache.aircraft = localData.getAircraft();
                     memoryCache.personnel = localData.getPersonnel();
                     memoryCache.attendance = localData.getAttendance();
                     memoryCache.loaded = true;
                     
                     loadDashboardData();
-                    setLoading(false); // Do not show the loader, because we have cache!
+                    setLoading(false); // Hide full-screen spinner
                     
-                    // Fetch data silently in the background so that any new records are updated
+                    // Keep unit buttons flu/disabled while remote data preloads in background
+                    setIsUnitsLoading(true);
                     storageService.preload()
                         .then(() => loadDashboardData())
-                        .catch(e => console.warn("Background preload silent fail", e));
+                        .catch(e => console.warn("Background preload silent fail", e))
+                        .finally(() => setIsUnitsLoading(false));
                 } else {
-                    // First time loading - show the loader as there's no cached data
+                    // First time loading - show full loader until data preloads
                     setLoading(true);
+                    setIsUnitsLoading(true);
                     storageService.preload()
                         .then(() => loadDashboardData())
-                        .then(() => setLoading(false))
-                        .catch(e => {
-                            console.error(e);
+                        .catch(e => console.error(e))
+                        .finally(() => {
                             setLoading(false);
+                            setIsUnitsLoading(false);
                         });
                 }
             }, [loadDashboardData]);
@@ -3100,7 +3109,11 @@
                 }
                 setSelModel(null);
                 setIsOrderChanged(false);
-                storageService.refresh().then(() => loadDashboardData()).catch(e => console.warn("Background refresh silent fail", e));
+                setIsUnitsLoading(true);
+                storageService.refresh()
+                    .then(() => loadDashboardData())
+                    .catch(e => console.warn("Background refresh silent fail", e))
+                    .finally(() => setIsUnitsLoading(false));
             };
 
             const handleSyncOvertime = async () => {
@@ -4186,8 +4199,8 @@
                 <div className="container mx-auto p-4 max-w-5xl space-y-8 animate-fade-in relative">
                     <h1 className="text-3xl font-bold text-white mb-4">Yoklama Takip</h1>
                     <Card title="Birim Seçiniz">
-                        <div className={`relative grid grid-cols-2 md:grid-cols-4 gap-4 transition-all duration-500 ${isUnitsLoading ? 'blur-xl pointer-events-none select-none opacity-30' : ''}`}>
-                             <button onClick={() => handleUnitSelection('YÖNETİM')} className={`p-6 rounded border-2 font-bold flex flex-col items-center transition-all group relative overflow-hidden ${!dashboardStatus['YÖNETİM']?.missing ? 'bg-teal-600 border-teal-400 hover:bg-teal-500 text-white' : 'bg-forest-800 border-forest-600 hover:bg-forest-700 text-white'}`}>
+                        <div className={`relative grid grid-cols-2 md:grid-cols-4 gap-4 transition-all duration-500 ${isUnitsLoading ? 'blur-xl pointer-events-none select-none opacity-30 cursor-not-allowed' : ''}`}>
+                             <button disabled={isUnitsLoading} onClick={() => handleUnitSelection('YÖNETİM')} className={`p-6 rounded border-2 font-bold flex flex-col items-center transition-all group relative overflow-hidden ${!dashboardStatus['YÖNETİM']?.missing ? 'bg-teal-600 border-teal-400 hover:bg-teal-500 text-white' : 'bg-forest-800 border-forest-600 hover:bg-forest-700 text-white'} ${isUnitsLoading ? 'cursor-not-allowed' : ''}`}>
                                 <Users className="mb-2" /> YÖNETİM
                                 {dashboardStatus['YÖNETİM']?.missing && <span className="text-[10px] bg-red-600 px-2 py-0.5 rounded mt-2 animate-pulse w-full block">YOKLAMA GİRİLMEDİ</span>}
                             </button>
@@ -4195,7 +4208,7 @@
                                 const stat = dashboardStatus[m] || { pilotMissing: false, techMissing: false, groundMissing: false };
                                 const hasIssue = stat.pilotMissing || stat.techMissing || stat.groundMissing;
                                 return (
-                                <button key={m} onClick={() => handleUnitSelection(m)} className={`p-6 rounded border-2 font-bold flex flex-col items-center transition-all group relative overflow-hidden ${!hasIssue ? 'bg-teal-600 border-teal-400 hover:bg-teal-500 text-white' : 'bg-forest-800 border-forest-600 hover:bg-forest-700 text-white'}`}>
+                                <button key={m} disabled={isUnitsLoading} onClick={() => handleUnitSelection(m)} className={`p-6 rounded border-2 font-bold flex flex-col items-center transition-all group relative overflow-hidden ${!hasIssue ? 'bg-teal-600 border-teal-400 hover:bg-teal-500 text-white' : 'bg-forest-800 border-forest-600 hover:bg-forest-700 text-white'} ${isUnitsLoading ? 'cursor-not-allowed' : ''}`}>
                                     <ModelIcon category={inv.find(a => a.model === m)?.category} model={m} className="mb-2" /> {m}
                                     {stat.groundMissing && <span className="text-[10px] bg-red-600 px-2 py-0.5 rounded mt-2 animate-pulse w-full block">YOKLAMA GİRİLMEDİ</span>}
                                     {stat.pilotMissing && <span className="text-[10px] bg-orange-600 px-2 py-0.5 rounded mt-1 animate-pulse w-full block">PİLOT GİRİLMEDİ</span>}
