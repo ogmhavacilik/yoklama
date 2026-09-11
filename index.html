@@ -269,6 +269,7 @@
         const normalizeDate = (d) => {
             if (!d) return '';
             if (d instanceof Date) {
+                if (isNaN(d.getTime())) return '';
                 const year = d.getFullYear();
                 const month = String(d.getMonth() + 1).padStart(2, '0');
                 const day = String(d.getDate()).padStart(2, '0');
@@ -276,8 +277,21 @@
             }
             if (typeof d === 'string') {
                 const cleaned = d.trim();
-                if (cleaned.includes('T')) return cleaned.split('T')[0];
-                if (/^\d{4}-\d{2}-\d{2}$/.test(cleaned)) return cleaned;
+                
+                if (/^\d{4}-\d{2}-\d{2}$/.test(cleaned)) {
+                    return cleaned;
+                }
+                
+                if (cleaned.includes('T')) {
+                    const parsed = new Date(cleaned);
+                    if (!isNaN(parsed.getTime())) {
+                        const year = parsed.getFullYear();
+                        const month = String(parsed.getMonth() + 1).padStart(2, '0');
+                        const day = String(parsed.getDate()).padStart(2, '0');
+                        return `${year}-${month}-${day}`;
+                    }
+                    return cleaned.split('T')[0];
+                }
                 
                 const partsDot = cleaned.split('.');
                 if (partsDot.length === 3 && partsDot[2].length === 4) {
@@ -297,6 +311,24 @@
                 if (cleaned.length >= 10) return cleaned.substring(0, 10);
             }
             return '';
+        };
+
+        const parseDateSafe = (dStr) => {
+            if (!dStr) return new Date();
+            if (dStr instanceof Date) return dStr;
+            if (typeof dStr === 'string') {
+                if (dStr.includes('T')) {
+                    return new Date(dStr);
+                }
+                const parts = dStr.split(' ')[0].split('-');
+                if (parts.length === 3) {
+                    return new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10), 12, 0, 0);
+                }
+                if (dStr.includes('/')) {
+                    return new Date(dStr);
+                }
+            }
+            return new Date(dStr);
         };
 
         const getDisplayTitle = (title, role) => {
@@ -1144,8 +1176,8 @@
                     const prevStr = currentBlock.end;
                     const currStr = sorted[i];
                     
-                    const d1 = new Date(prevStr); d1.setHours(12,0,0,0);
-                    const d2 = new Date(currStr); d2.setHours(12,0,0,0);
+                    const d1 = parseDateSafe(prevStr); d1.setHours(12,0,0,0);
+                    const d2 = parseDateSafe(currStr); d2.setHours(12,0,0,0);
                     const gapDays = Math.round((d2 - d1) / (1000 * 60 * 60 * 24));
                     
                     // Gap of up to 3 days includes Friday to Monday weekend bridges
@@ -1528,8 +1560,8 @@
                             lastDataRowIndex = rowIndex;
                             worksheet.getRow(rowIndex).height = 18;
                             
-                            const d1 = new Date(block.start); d1.setHours(12,0,0,0);
-                            const d2 = new Date(block.end); d2.setHours(12,0,0,0);
+                            const d1 = parseDateSafe(block.start); d1.setHours(12,0,0,0);
+                            const d2 = parseDateSafe(block.end); d2.setHours(12,0,0,0);
                             
                             const hStart = new Date(d1);
                             const hEnd = new Date(d2);
@@ -2042,16 +2074,16 @@
                                                     const displayedDays = (() => {
                                                         if (!isSelected) {
                                                             return personBlocks.reduce((sum, b) => {
-                                                                const d1 = new Date(b.start); d1.setHours(12,0,0,0);
-                                                                const d2 = new Date(b.end); d2.setHours(12,0,0,0);
+                                                                const d1 = parseDateSafe(b.start); d1.setHours(12,0,0,0);
+                                                                const d2 = parseDateSafe(b.end); d2.setHours(12,0,0,0);
                                                                 return sum + Math.round((d2 - d1) / (1000 * 60 * 60 * 24)) + 1;
                                                             }, 0);
                                                         }
                                                         const selectedDatesForPerson = Array.from(selectedHarcirahDates[p.id] || []);
                                                         const selectedBlocksForPerson = getMergedHarcirahBlocks(selectedDatesForPerson);
                                                         return selectedBlocksForPerson.reduce((sum, b) => {
-                                                            const blockStart = new Date(b.start); blockStart.setHours(12,0,0,0);
-                                                            const blockEnd = new Date(b.end); blockEnd.setHours(12,0,0,0);
+                                                            const blockStart = parseDateSafe(b.start); blockStart.setHours(12,0,0,0);
+                                                            const blockEnd = parseDateSafe(b.end); blockEnd.setHours(12,0,0,0);
                                                             return sum + Math.round((blockEnd - blockStart) / (1000 * 60 * 60 * 24)) + 1;
                                                         }, 0);
                                                     })();
@@ -2363,7 +2395,7 @@
                                     <div>
                                         <h3 className="text-lg font-bold text-white uppercase tracking-tight">Yoklama Önizleme</h3>
                                         <p className="text-xs text-forest-400 font-medium">
-                                            {selectedHarcirahUnit} | {selectedHarcirahCity} | {attendancePreviewData.range && new Date(attendancePreviewData.range.start).toLocaleDateString('tr-TR')} - {attendancePreviewData.range && new Date(attendancePreviewData.range.end).toLocaleDateString('tr-TR')}
+                                            {selectedHarcirahUnit} | {selectedHarcirahCity} | {attendancePreviewData.range && parseDateSafe(attendancePreviewData.range.start).toLocaleDateString('tr-TR')} - {attendancePreviewData.range && parseDateSafe(attendancePreviewData.range.end).toLocaleDateString('tr-TR')}
                                         </p>
                                     </div>
                                     <button 
@@ -2381,17 +2413,17 @@
                                                 {(() => {
                                                     if (!attendancePreviewData.range) return null;
                                                     const dates = [];
-                                                    let curr = new Date(attendancePreviewData.range.start);
-                                                    const end = new Date(attendancePreviewData.range.end);
+                                                    let curr = parseDateSafe(attendancePreviewData.range.start);
+                                                    const end = parseDateSafe(attendancePreviewData.range.end);
                                                     while(curr <= end) {
-                                                        dates.push(new Date(curr).toISOString().split('T')[0]);
+                                                        dates.push(normalizeDate(curr));
                                                         curr.setDate(curr.getDate() + 1);
                                                     }
                                                     return dates.map(d => (
                                                         <th key={d} className="p-1 text-center border border-forest-700 bg-forest-800/80 min-w-[40px]">
                                                             <div className="flex flex-col">
-                                                                <span className="text-[10px] opacity-70">{new Date(d).toLocaleDateString('tr-TR', { weekday: 'short' })}</span>
-                                                                <span>{new Date(d).getDate()}</span>
+                                                                <span className="text-[10px] opacity-70">{parseDateSafe(d).toLocaleDateString('tr-TR', { weekday: 'short' })}</span>
+                                                                <span>{parseDateSafe(d).getDate()}</span>
                                                             </div>
                                                         </th>
                                                     ));
@@ -2407,10 +2439,10 @@
                                                         {(() => {
                                                             if (!attendancePreviewData.range) return null;
                                                             const dates = [];
-                                                            let curr = new Date(attendancePreviewData.range.start);
-                                                            const end = new Date(attendancePreviewData.range.end);
+                                                            let curr = parseDateSafe(attendancePreviewData.range.start);
+                                                            const end = parseDateSafe(attendancePreviewData.range.end);
                                                             while(curr <= end) {
-                                                                dates.push(new Date(curr).toISOString().split('T')[0]);
+                                                                dates.push(normalizeDate(curr));
                                                                 curr.setDate(curr.getDate() + 1);
                                                             }
                                                             return dates.map(d => {
@@ -2459,7 +2491,7 @@
                                         <div>
                                             <h3 className="text-lg font-bold text-white uppercase tracking-tight">Yoklama Görünümü</h3>
                                             <p className="text-xs text-forest-400 font-medium">
-                                                {fullAttendanceParams.model} | {new Date(fullAttendanceParams.start).toLocaleDateString('tr-TR')} - {new Date(fullAttendanceParams.end).toLocaleDateString('tr-TR')}
+                                                {fullAttendanceParams.model} | {parseDateSafe(fullAttendanceParams.start).toLocaleDateString('tr-TR')} - {parseDateSafe(fullAttendanceParams.end).toLocaleDateString('tr-TR')}
                                             </p>
                                         </div>
                                     </div>
@@ -3270,7 +3302,7 @@
 
                 const next = {};
                 const referenceDate = rangeStartDate;
-                const dObj = new Date(referenceDate); 
+                const dObj = parseDateSafe(referenceDate); 
                 const isWe = dObj.getDay() === 0 || dObj.getDay() === 6;
 
                 people.forEach(p => {
@@ -3681,7 +3713,7 @@
                             includeWeekend: att[person.id].includeWeekend
                         };
                     } else {
-                        const prevDate = new Date(d); prevDate.setDate(prevDate.getDate() - 1);
+                        const prevDate = parseDateSafe(d); prevDate.setDate(prevDate.getDate() - 1);
                         const prevStr = normalizeDate(prevDate);
                         const prevRec = initialStates[prevStr] || freshRecs.find(rec => rec.personId === person.id && rec.date === prevStr && rec.status && rec.status !== '');
 
@@ -3704,7 +3736,7 @@
                         [dateStr]: { ...prev[dateStr], [field]: value }
                     };
 
-                    const dObj = new Date(dateStr);
+                    const dObj = parseDateSafe(dateStr);
                     if (dObj.getDay() === 5 && next[dateStr].status === AttendanceStatus.DUTY) {
                         const satDate = new Date(dObj); satDate.setDate(satDate.getDate() + 1); const satStr = normalizeDate(satDate);
                         const sunDate = new Date(dObj); sunDate.setDate(sunDate.getDate() + 2); const sunStr = normalizeDate(sunDate);
@@ -3736,7 +3768,7 @@
                         }
                     };
 
-                    const dObj = new Date(dateStr);
+                    const dObj = parseDateSafe(dateStr);
                     if (dObj.getDay() === 5 && status === AttendanceStatus.DUTY) {
                         const satDate = new Date(dObj); satDate.setDate(satDate.getDate() + 1); const satStr = normalizeDate(satDate);
                         const sunDate = new Date(dObj); sunDate.setDate(sunDate.getDate() + 2); const sunStr = normalizeDate(sunDate);
@@ -3936,8 +3968,8 @@
                                 // Group continuous days of same person AND same leave type
                                 while (i + 1 < pRecs.length) {
                                     const nextR = pRecs[i + 1];
-                                    const d1 = new Date(pRecs[i].date);
-                                    const d2 = new Date(nextR.date);
+                                    const d1 = parseDateSafe(pRecs[i].date);
+                                    const d2 = parseDateSafe(nextR.date);
                                     const isNextDay = Math.ceil((d2 - d1) / (1000 * 60 * 60 * 24)) === 1;
 
                                     let nextType = nextR.status === AttendanceStatus.LEAVE ? nextR.leaveType : nextR.status;
@@ -4449,7 +4481,7 @@
                                                                 />
                                                             </td>
                                                             <td className="py-2 font-medium text-white">{displayName}</td>
-                                                            <td className="py-2">{r.date ? new Date(r.date.replace(/-/g, '/')).toLocaleDateString('tr-TR') : '-'}</td>
+                                                            <td className="py-2">{r.date ? parseDateSafe(r.date).toLocaleDateString('tr-TR') : '-'}</td>
                                                             <td className="py-2 text-[11px] leading-tight text-forest-100">{r.status} {r.leaveType ? `(${r.leaveType})` : ''}</td>
                                                             <td className="py-2 max-w-[120px] truncate">{r.note}</td>
                                                         </tr>
