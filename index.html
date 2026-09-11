@@ -356,19 +356,34 @@
         };
 
         const localData = {
-            getAircraft: () => JSON.parse(localStorage.getItem('ogm_aircraft') || JSON.stringify(INITIAL_AIRCRAFT)),
-            saveAircraft: (d) => localStorage.setItem('ogm_aircraft', JSON.stringify(d)),
-            getPersonnel: () => JSON.parse(localStorage.getItem('ogm_personnel') || JSON.stringify(INITIAL_PERSONNEL)),
-            savePersonnel: (d) => localStorage.setItem('ogm_personnel', JSON.stringify(d)),
-            getAttendance: () => JSON.parse(localStorage.getItem('ogm_attendance') || '[]'),
-            setAttendance: (data) => localStorage.setItem('ogm_attendance', JSON.stringify(data)),
+            safeGet: (key, fallback) => {
+                try {
+                    const item = localStorage.getItem(key);
+                    return item ? JSON.parse(item) : fallback;
+                } catch (e) {
+                    console.warn('localStorage get failed', e);
+                    return fallback;
+                }
+            },
+            safeSet: (key, val) => {
+                try {
+                    localStorage.setItem(key, JSON.stringify(val));
+                } catch (e) {
+                    console.warn('localStorage set failed', e);
+                }
+            },
+            getAircraft: () => localData.safeGet('ogm_aircraft', INITIAL_AIRCRAFT),
+            saveAircraft: (d) => localData.safeSet('ogm_aircraft', d),
+            getPersonnel: () => localData.safeGet('ogm_personnel', INITIAL_PERSONNEL),
+            savePersonnel: (d) => localData.safeSet('ogm_personnel', d),
+            getAttendance: () => localData.safeGet('ogm_attendance', []),
+            setAttendance: (data) => localData.safeSet('ogm_attendance', data),
             saveAttendance: (newRecords) => {
                 const existing = localData.getAttendance();
                 const others = existing.filter(e => !newRecords.some(n => n.personId === e.personId && n.date === e.date));
-                // Only merge records that have a non-empty status (filter out deletion stubs)
                 const filteredNew = newRecords.filter(n => n.status && n.status !== '');
                 const merged = [...others, ...filteredNew];
-                localStorage.setItem('ogm_attendance', JSON.stringify(merged));
+                localData.safeSet('ogm_attendance', merged);
                 return merged;
             }
         };
@@ -403,6 +418,9 @@
                     if (json.success === false) throw new Error(json.error || 'API Error');
                     return json.data !== undefined ? json.data : json;
                 }
+                if (rawText && (rawText.toLowerCase().includes('<!doctype html>') || rawText.toLowerCase().includes('<html'))) {
+                    throw new Error('AUTH_REQUIRED: Google login required or cookies blocked.');
+                }
                 return rawText;
             } catch (error) {
                 if (timeoutId) clearTimeout(timeoutId);
@@ -416,13 +434,17 @@
 
         const storageService = {
             preload: async () => {
-                try {
-                    const data = await apiCall('get_init_data');
-                    if (data && data.aircraft) {
-                        const formattedAC = data.aircraft.map(a => ({ ...a, id: String(a.id) }));
-                        localData.saveAircraft(formattedAC);
-                        memoryCache.aircraft = formattedAC;
-                    }
+                if (memoryCache.preloadPromise) {
+                    return memoryCache.preloadPromise;
+                }
+                memoryCache.preloadPromise = (async () => {
+                    try {
+                        const data = await apiCall('get_init_data');
+                        if (data && data.aircraft) {
+                            const formattedAC = data.aircraft.map(a => ({ ...a, id: String(a.id) }));
+                            localData.saveAircraft(formattedAC);
+                            memoryCache.aircraft = formattedAC;
+                        }
                     if (data && data.personnel) {
                         let formattedPL = data.personnel.map(p => {
                             // TC No için tüm olası anahtar varyasyonlarını tara (TC NO, TC no, tc_no, TC, tcNo vb.)
@@ -457,7 +479,11 @@
                         memoryCache.personnel = formattedPL;
                     }
 
-                    const att = await apiCall('get_attendance');
+                    const attResponse = await apiCall('get_attendance');
+                    let att = Array.isArray(attResponse) ? attResponse : 
+                              (attResponse && attResponse.attendance ? attResponse.attendance : 
+                              (attResponse && attResponse.records ? attResponse.records : []));
+                              
                     if (att && Array.isArray(att)) {
                         const formattedAtt = att.map(r => ({
                             ...r,
@@ -478,6 +504,8 @@
                     memoryCache.attendance = localData.getAttendance();
                     memoryCache.loaded = true;
                 }
+                })();
+                return memoryCache.preloadPromise;
             },
             refresh: async () => {
                 memoryCache.loaded = false;
@@ -917,7 +945,7 @@
                     // Update state without refresh
                     const updatedList = plList.map(p => p.id === photoPerson.id ? { ...p, photoUrl: updatedUrl } : p);
                     setPlList(updatedList);
-                    localStorage.setItem('ogm_personnel', JSON.stringify(updatedList));
+                    localData.savePersonnel(updatedList);
                     
                     if (photoPerson) setPhotoPerson({ ...photoPerson, photoUrl: updatedUrl });
                     setTempPhotoData(null); // Önizlemeyi temizle
@@ -979,7 +1007,7 @@
                         
                         const updatedList = plList.map(p => p.id === photoPerson.id ? { ...p, photoUrl: updatedUrl } : p);
                         setPlList(updatedList);
-                        localStorage.setItem('ogm_personnel', JSON.stringify(updatedList));
+                        localData.savePersonnel(updatedList);
                         
                         setPhotoPerson({ ...photoPerson, photoUrl: updatedUrl });
                         setTempPhotoData(null);
@@ -3050,9 +3078,9 @@
                         const pilots = relevantPersonnel.filter(p => p.role === Role.PILOT || (p.title && p.title.toLocaleUpperCase('tr-TR').includes('PİLOT')));
                         const techs = relevantPersonnel.filter(p => !pilots.includes(p));
 
-                        const pilotDataExists = pilots.length > 0 && pilots.some(p => (recs || []).some(r => r.date === today && r.personId === p.id));
-                        const techDataExists = techs.length > 0 && techs.some(p => (recs || []).some(r => r.date === today && r.personId === p.id));
-                        const groundDataExists = relevantPersonnel.length > 0 && relevantPersonnel.some(p => (recs || []).some(r => r.date === today && r.personId === p.id));
+                        const pilotDataExists = pilots.length > 0 && pilots.some(p => (recs || []).some(r => r.date === today && r.personId === p.id && r.status && r.status !== ''));
+                        const techDataExists = techs.length > 0 && techs.some(p => (recs || []).some(r => r.date === today && r.personId === p.id && r.status && r.status !== ''));
+                        const groundDataExists = relevantPersonnel.length > 0 && relevantPersonnel.some(p => (recs || []).some(r => r.date === today && r.personId === p.id && r.status && r.status !== ''));
 
                         const isGroundUnit = m === AircraftModel.YER_DESTEK;
                         const isTechnicalUnit = m === AircraftModel.TEKNIK_EKIP;
@@ -3066,7 +3094,7 @@
 
                     // Check YONETIM Status
                     const yonetimMembers = finalPersonnel.filter(p => YONETIM_NAMES.includes(p.fullName));
-                    const yonetimHasData = yonetimMembers.some(p => (recs || []).some(r => r.date === today && r.personId === p.id));
+                    const yonetimHasData = yonetimMembers.some(p => (recs || []).some(r => r.date === today && r.personId === p.id && r.status && r.status !== ''));
                     statusMap['YÖNETİM'] = { missing: !yonetimHasData && yonetimMembers.length > 0 };
 
                     setDashboardStatus(statusMap);
@@ -3102,13 +3130,13 @@
 
             useEffect(() => {
                 setIsUnitsLoading(true);
-                const acLocal = localStorage.getItem('ogm_aircraft');
-                const plLocal = localStorage.getItem('ogm_personnel');
+                const acLocal = localData.getAircraft();
+                const plLocal = localData.getPersonnel();
                 
-                if (acLocal && plLocal) {
+                if (acLocal && plLocal && acLocal.length > 0 && plLocal.length > 0) {
                     // Load cached data synchronously first for instant initial display
-                    memoryCache.aircraft = localData.getAircraft();
-                    memoryCache.personnel = localData.getPersonnel();
+                    memoryCache.aircraft = acLocal;
+                    memoryCache.personnel = plLocal;
                     memoryCache.attendance = localData.getAttendance();
                     memoryCache.loaded = true;
                     
