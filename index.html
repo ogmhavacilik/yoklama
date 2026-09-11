@@ -348,107 +348,133 @@
             loaded: false
         };
 
-        const apiCall = async (action, payload = {}, timeoutMs = 120000) => {
-            const controller = new AbortController();
-            const timeoutId = timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : null; 
-            try {
-                const response = await fetch(GOOGLE_SCRIPT_URL, {
-                    method: 'POST',
-                    mode: 'cors',
-                    redirect: 'follow',
-                    body: JSON.stringify({ action, ...payload }),
-                    signal: controller.signal
-                });
-                if (timeoutId) clearTimeout(timeoutId);
-                const rawText = await response.text();
-                let json = null;
+        const apiCall = async (action, payload = {}, timeoutMs = 120000, retries = 2) => {
+            for (let attempt = 0; attempt <= retries; attempt++) {
+                const controller = new AbortController();
+                // iPhone/Safari optimization: slightly shorter timeout for initial attempt to trigger retry faster if connection is stale
+                const actualTimeout = attempt === 0 ? Math.min(timeoutMs, 20000) : timeoutMs;
+                const timeoutId = actualTimeout > 0 ? setTimeout(() => controller.abort(), actualTimeout) : null; 
                 try {
-                    json = JSON.parse(rawText);
-                } catch (e) {
-                    // Response was plain text or non-JSON
+                    const response = await fetch(GOOGLE_SCRIPT_URL, {
+                        method: 'POST',
+                        mode: 'cors',
+                        cache: 'no-cache', // iPhone cache stabilization
+                        credentials: 'omit',
+                        headers: {
+                            'Content-Type': 'text/plain;charset=UTF-8', // Bypass preflight if possible for speed
+                        },
+                        body: JSON.stringify({ action, ...payload }),
+                        signal: controller.signal
+                    });
+                    if (timeoutId) clearTimeout(timeoutId);
+                    const rawText = await response.text();
+                    let json = null;
+                    try {
+                        json = JSON.parse(rawText);
+                    } catch (e) {
+                        // Response was plain text or non-JSON
+                    }
+                    if (json) {
+                        if (json.success === false) throw new Error(json.error || 'API Error');
+                        return json.data !== undefined ? json.data : json;
+                    }
+                    return rawText;
+                } catch (error) {
+                    if (timeoutId) clearTimeout(timeoutId);
+                    if (attempt < retries) {
+                        // Exponential backoff for retries
+                        await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+                        continue;
+                    }
+                    if (error.name === 'AbortError') {
+                        console.warn(`API call '${action}' timed out after ${actualTimeout}ms.`);
+                        return null;
+                    }
+                    throw error;
                 }
-                if (json) {
-                    if (json.success === false) throw new Error(json.error || 'API Error');
-                    return json.data !== undefined ? json.data : json;
-                }
-                return rawText;
-            } catch (error) {
-                if (timeoutId) clearTimeout(timeoutId);
-                if (error.name === 'AbortError') {
-                    console.warn(`API call '${action}' was aborted or timed out after ${timeoutMs}ms.`);
-                    return null;
-                }
-                throw error;
             }
         };
 
         const storageService = {
             preload: async () => {
-                try {
-                    const data = await apiCall('get_init_data');
-                    if (data && data.aircraft) {
-                        const formattedAC = data.aircraft.map(a => ({ ...a, id: String(a.id) }));
-                        localData.saveAircraft(formattedAC);
-                        memoryCache.aircraft = formattedAC;
-                    }
-                    if (data && data.personnel) {
-                        let formattedPL = data.personnel.map(p => {
-                            // TC No için tüm olası anahtar varyasyonlarını tara (TC NO, TC no, tc_no, TC, tcNo vb.)
-                            let foundTc = '';
-                            const tcKeys = ['tcNo', 'TC NO', 'TC no', 'tc_no', 'TC', 'tcno', 'TcNo'];
-                            for (const k of tcKeys) {
-                                if (p[k]) {
-                                    foundTc = String(p[k]);
-                                    break;
+                if (memoryCache.preloadPromise) return memoryCache.preloadPromise;
+
+                memoryCache.preloadPromise = (async () => {
+                    try {
+                        // Parallelize API calls for maximum speed
+                        const [data, att] = await Promise.all([
+                            apiCall('get_init_data'),
+                            apiCall('get_attendance')
+                        ]);
+
+                        if (data && data.aircraft) {
+                            const formattedAC = data.aircraft.map(a => ({ ...a, id: String(a.id) }));
+                            localData.saveAircraft(formattedAC);
+                            memoryCache.aircraft = formattedAC;
+                        }
+                        if (data && data.personnel) {
+                            let formattedPL = data.personnel.map(p => {
+                                // TC No için tüm olası anahtar varyasyonlarını tara (TC NO, TC no, tc_no, TC, tcNo vb.)
+                                let foundTc = '';
+                                const tcKeys = ['tcNo', 'TC NO', 'TC no', 'tc_no', 'TC', 'tcno', 'TcNo'];
+                                for (const k of tcKeys) {
+                                    if (p[k]) {
+                                        foundTc = String(p[k]);
+                                        break;
+                                    }
                                 }
-                            }
-                            // Eğer hala bulunamadıysa içinde 'TC' geçen ilk anahtara bak
-                            if (!foundTc) {
-                                const altKey = Object.keys(p).find(k => k.toUpperCase().includes('TC'));
-                                if (altKey) foundTc = String(p[altKey]);
-                            }
+                                // Eğer hala bulunamadıysa içinde 'TC' geçen ilk anahtara bak
+                                if (!foundTc) {
+                                    const altKey = Object.keys(p).find(k => k.toUpperCase().includes('TC'));
+                                    if (altKey) foundTc = String(p[altKey]);
+                                }
 
-                            return { 
-                                ...p, 
-                                id: String(p.id), 
-                                photoUrl: fixDriveUrl(p.photoUrl),
-                                tcNo: foundTc || ''
-                            };
-                        });
-                        INITIAL_PERSONNEL.forEach(initP => {
-                            if (!formattedPL.some(p => p.id === initP.id)) {
-                                formattedPL.push(initP);
-                            }
-                        });
-                        formattedPL.sort((a, b) => (a.rank || 999) - (b.rank || 999));
-                        localData.savePersonnel(formattedPL);
-                        memoryCache.personnel = formattedPL;
+                                return { 
+                                    ...p, 
+                                    id: String(p.id), 
+                                    photoUrl: fixDriveUrl(p.photoUrl),
+                                    tcNo: foundTc || ''
+                                };
+                            });
+                            INITIAL_PERSONNEL.forEach(initP => {
+                                if (!formattedPL.some(p => p.id === initP.id)) {
+                                    formattedPL.push(initP);
+                                }
+                            });
+                            formattedPL.sort((a, b) => (a.rank || 999) - (b.rank || 999));
+                            localData.savePersonnel(formattedPL);
+                            memoryCache.personnel = formattedPL;
+                        }
+
+                        if (att && Array.isArray(att)) {
+                            const formattedAtt = att.map(r => ({
+                                ...r,
+                                id: String(r.id),
+                                personId: String(r.personId),
+                                date: normalizeDate(r.date),
+                                status: r.status === 'İzinli' ? 'İzin' : r.status
+                            })).filter(r => r.status && r.status !== '');
+
+                            localData.setAttendance(formattedAtt);
+                            memoryCache.attendance = formattedAtt;
+                        }
+                        memoryCache.loaded = true;
+                    } catch (e) {
+                        console.warn("Preload background fetch error, using local", e);
+                        memoryCache.aircraft = localData.getAircraft();
+                        memoryCache.personnel = localData.getPersonnel();
+                        memoryCache.attendance = localData.getAttendance();
+                        memoryCache.loaded = true;
+                    } finally {
+                        memoryCache.preloadPromise = null;
                     }
+                })();
 
-                    const att = await apiCall('get_attendance');
-                    if (att && Array.isArray(att)) {
-                        const formattedAtt = att.map(r => ({
-                            ...r,
-                            id: String(r.id),
-                            personId: String(r.personId),
-                            date: normalizeDate(r.date),
-                            status: r.status === 'İzinli' ? 'İzin' : r.status
-                        })).filter(r => r.status && r.status !== '');
-
-                        localData.setAttendance(formattedAtt);
-                        memoryCache.attendance = formattedAtt;
-                    }
-                    memoryCache.loaded = true;
-                } catch (e) {
-                    console.warn("Preload failed, using local", e);
-                    memoryCache.aircraft = localData.getAircraft();
-                    memoryCache.personnel = localData.getPersonnel();
-                    memoryCache.attendance = localData.getAttendance();
-                    memoryCache.loaded = true;
-                }
+                return memoryCache.preloadPromise;
             },
             refresh: async () => {
                 memoryCache.loaded = false;
+                memoryCache.preloadPromise = null;
                 await storageService.preload();
             },
             getAttendanceSync: () => memoryCache.attendance || localData.getAttendance(),
@@ -3070,37 +3096,29 @@
 
             useEffect(() => {
                 setIsUnitsLoading(true);
-                const acLocal = localStorage.getItem('ogm_aircraft');
-                const plLocal = localStorage.getItem('ogm_personnel');
                 
-                if (acLocal && plLocal) {
-                    // Load cached data synchronously first for instant initial display
-                    memoryCache.aircraft = localData.getAircraft();
-                    memoryCache.personnel = localData.getPersonnel();
-                    memoryCache.attendance = localData.getAttendance();
-                    memoryCache.loaded = true;
-                    
-                    loadDashboardData();
-                    setLoading(false); // Hide full-screen spinner
-                    
-                    // Keep unit buttons flu/disabled while remote data preloads in background
-                    setIsUnitsLoading(true);
-                    storageService.preload()
-                        .then(() => loadDashboardData())
-                        .catch(e => console.warn("Background preload silent fail", e))
-                        .finally(() => setIsUnitsLoading(false));
-                } else {
-                    // First time loading - show full loader until data preloads
-                    setLoading(true);
-                    setIsUnitsLoading(true);
-                    storageService.preload()
-                        .then(() => loadDashboardData())
-                        .catch(e => console.error(e))
-                        .finally(() => {
-                            setLoading(false);
-                            setIsUnitsLoading(false);
-                        });
-                }
+                // CRITICAL: Load from local storage INSTANTLY for immediate startup
+                const acLocal = localData.getAircraft();
+                const plLocal = localData.getPersonnel();
+                const attLocal = localData.getAttendance();
+                
+                memoryCache.aircraft = acLocal;
+                memoryCache.personnel = plLocal;
+                memoryCache.attendance = attLocal;
+                memoryCache.loaded = true; // Mark as loaded so UI doesn't block
+                
+                loadDashboardData();
+                setLoading(false); // Remove full screen loader immediately
+                
+                // Background refresh to get the latest data without making the user wait
+                storageService.preload()
+                    .then(() => {
+                        loadDashboardData();
+                    })
+                    .catch(e => console.warn("Silent background preload failed", e))
+                    .finally(() => {
+                        setIsUnitsLoading(false);
+                    });
             }, [loadDashboardData]);
 
             const handleBackToDashboard = () => {
