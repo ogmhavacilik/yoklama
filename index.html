@@ -1767,7 +1767,7 @@
                              </Button>
                         </div>
                     </div>
-                    <div className="flex gap-2 mb-6 border-b border-forest-600 pb-2">
+                    <div className="flex gap-2 mb-6 border-b border-forest-600 pb-2 flex-wrap">
                         <button onClick={() => setTab('aircraft')} className={`px-4 py-2 rounded ${tab === 'aircraft' ? 'bg-forest-600 text-white' : 'text-forest-300'}`}>Hava Araçları</button>
                         <button onClick={() => setTab('personnel')} className={`px-4 py-2 rounded ${tab === 'personnel' ? 'bg-forest-600 text-white' : 'text-forest-300'}`}>Personel</button>
                         <button onClick={() => setTab('harcirah')} className={`px-4 py-2 rounded ${tab === 'harcirah' ? 'bg-forest-600 text-white' : 'text-forest-300'}`}>Harcırah</button>
@@ -3041,8 +3041,6 @@
                 }
                 } catch (err) {
                     console.error("Error loading dashboard data:", err);
-                } finally {
-                    setIsUnitsLoading(false);
                 }
             }, []);
 
@@ -3083,12 +3081,12 @@
                     loadDashboardData();
                     setLoading(false); // Hide full-screen spinner
                     
-                    // Keep unit buttons flu/disabled while remote data preloads in background
-                    setIsUnitsLoading(true);
+                    // Do NOT block UI. Let user interact immediately.
+                    // Silently sync in the background.
+                    setIsUnitsLoading(false); 
                     storageService.preload()
                         .then(() => loadDashboardData())
-                        .catch(e => console.warn("Background preload silent fail", e))
-                        .finally(() => setIsUnitsLoading(false));
+                        .catch(e => console.warn("Background preload silent fail", e));
                 } else {
                     // First time loading - show full loader until data preloads
                     setLoading(true);
@@ -3109,11 +3107,15 @@
                 }
                 setSelModel(null);
                 setIsOrderChanged(false);
-                setIsUnitsLoading(true);
-                storageService.refresh()
+                
+                // Immediately return to active dashboard without blocking
+                setIsUnitsLoading(false);
+                loadDashboardData();
+                
+                // Silent background update in case something changed externally
+                storageService.preload()
                     .then(() => loadDashboardData())
-                    .catch(e => console.warn("Background refresh silent fail", e))
-                    .finally(() => setIsUnitsLoading(false));
+                    .catch(e => console.warn("Background refresh silent fail", e));
             };
 
             const handleSyncOvertime = async () => {
@@ -3341,6 +3343,17 @@
                     return savePromiseRef.current;
                 }
 
+                const daysCheck = getDaysInRange(rangeStartDate, rangeEndDate);
+                const hasWeekendInSelection = daysCheck.some(d => d.getDay() === 0 || d.getDay() === 6);
+                const isWeeklyModeCheck = rangeStartDate !== rangeEndDate;
+                
+                if (!isAutoSave && isWeeklyModeCheck && hasWeekendInSelection) {
+                    const confirmed = window.confirm(`Seçtiğiniz tarih aralığı (${rangeStartDate} ile ${rangeEndDate}) hafta sonunu içermektedir.\n\nYaptığınız seçimler (eğer seçilmişse) hafta sonu günlerine de (Cumartesi ve Pazar) aynen uygulanacaktır.\n\nOnaylıyor musunuz?`);
+                    if (!confirmed) {
+                        return;
+                    }
+                }
+
                 const runSave = async () => {
                     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
                     if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
@@ -3414,17 +3427,8 @@
 
                         if (!s?.status) return;
 
-                        if (isWeekend && isWeeklyMode && !s.includeWeekend) {
-                            const existingRec = allRecs.find(r => r.personId === p.id && r.date === dStr);
-                            if (existingRec) {
-                                counter++;
-                                recs.push({
-                                    ...existingRec,
-                                    status: '' 
-                                });
-                            }
-                            return;
-                        }
+                        // Removed the blocking skip logic here so that explicitly selected weekends in range get the status!
+                        // "Hafta sonu dahil" logic from main screen transfers cleanly over explicitly selected date ranges.
 
                         const dType = s.dutyType || DutyType.PLANNED;
                         
@@ -3444,22 +3448,30 @@
                                                      (existingSun && existingSun.status && existingSun.status !== '');
 
                              if (hasWeekendJunk && (!shouldIncludeWeekend || !s.includeWeekend)) {
-                                 counter++;
-                                 recs.push({
-                                    id: `${timestamp}-${counter}-cleanup-sat-${p.id}`,
-                                    date: satStr,
-                                    personId: p.id,
-                                    status: '', 
-                                    aircraftTypeSnapshot: selModel || undefined
-                                 });
-                                 counter++;
-                                 recs.push({
-                                    id: `${timestamp}-${counter}-cleanup-sun-${p.id}`,
-                                    date: sunStr,
-                                    personId: p.id,
-                                    status: '', 
-                                    aircraftTypeSnapshot: selModel || undefined
-                                 });
+                                 const isSatInSelection = dayStrings.includes(satStr);
+                                 const isSunInSelection = dayStrings.includes(sunStr);
+                                 
+                                 if (!isSatInSelection && existingSat) {
+                                     counter++;
+                                     recs.push({
+                                        id: `${timestamp}-${counter}-cleanup-sat-${p.id}`,
+                                        date: satStr,
+                                        personId: p.id,
+                                        status: '', 
+                                        aircraftTypeSnapshot: selModel || undefined
+                                     });
+                                 }
+                                 
+                                 if (!isSunInSelection && existingSun) {
+                                     counter++;
+                                     recs.push({
+                                        id: `${timestamp}-${counter}-cleanup-sun-${p.id}`,
+                                        date: sunStr,
+                                        personId: p.id,
+                                        status: '', 
+                                        aircraftTypeSnapshot: selModel || undefined
+                                     });
+                                 }
                              }
                         }
 
@@ -3635,13 +3647,13 @@
                 }
             };
 
-            const openDetailModal = (person) => {
+            const openDetailModal = async (person) => {
                 if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
                 if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
                 setAutoSaveCountdown(null);
 
                 if (hasUnsavedChanges) {
-                    save(true);
+                    await save(true);
                 }
                 const freshRecs = storageService.getAttendanceSync() || allRecs;
 
@@ -3667,19 +3679,25 @@
                     const r = freshRecs.find(rec => rec.personId === person.id && rec.date === dStr && rec.status && rec.status !== '');
                     const isWe = d.getDay() === 0 || d.getDay() === 6;
                     const validStatuses = Object.values(AttendanceStatus);
+                    
+                    const isInSelectedRange = dStr >= rangeStartDate && dStr <= rangeEndDate;
 
                     if (r && r.status && validStatuses.includes(r.status)) {
                         initialStates[dStr] = { ...r };
-                    } else if (dStr === rangeStartDate && att[person.id] && att[person.id].status) {
-                        initialStates[dStr] = {
-                            status: att[person.id].status,
-                            dutyLocation: att[person.id].dutyLocation,
-                            dutyLocationDetail: att[person.id].dutyLocationDetail,
-                            leaveType: att[person.id].leaveType,
-                            note: att[person.id].note,
-                            dutyType: att[person.id].dutyType,
-                            includeWeekend: att[person.id].includeWeekend
-                        };
+                    } else if (isInSelectedRange && att[person.id] && att[person.id].status) {
+                        if (isWe && !att[person.id].includeWeekend) {
+                            initialStates[dStr] = { status: undefined };
+                        } else {
+                            initialStates[dStr] = {
+                                status: att[person.id].status,
+                                dutyLocation: att[person.id].dutyLocation,
+                                dutyLocationDetail: att[person.id].dutyLocationDetail,
+                                leaveType: att[person.id].leaveType,
+                                note: att[person.id].note,
+                                dutyType: att[person.id].dutyType,
+                                includeWeekend: att[person.id].includeWeekend
+                            };
+                        }
                     } else {
                         const prevDate = new Date(d); prevDate.setDate(prevDate.getDate() - 1);
                         const prevStr = normalizeDate(prevDate);
@@ -3687,6 +3705,21 @@
 
                         if (isWe) {
                             initialStates[dStr] = { status: undefined };
+                            if (prevRec && prevRec.status) {
+                                const shouldInclude = prevRec.status === AttendanceStatus.DUTY || 
+                                                    (prevRec.status === AttendanceStatus.LEAVE && prevRec.leaveType === LeaveType.OVERTIME);
+                                if (shouldInclude && prevRec.includeWeekend) {
+                                    initialStates[dStr] = { 
+                                        status: prevRec.status,
+                                        dutyLocation: prevRec.dutyLocation,
+                                        dutyLocationDetail: prevRec.dutyLocationDetail,
+                                        dutyType: prevRec.dutyType,
+                                        leaveType: prevRec.leaveType,
+                                        note: prevRec.note,
+                                        includeWeekend: true
+                                    };
+                                }
+                            }
                         } else {
                             if (prevRec) initialStates[dStr] = { ...prevRec, id: undefined };
                             else initialStates[dStr] = { status: AttendanceStatus.PRESENT };
@@ -3846,8 +3879,18 @@
 
                     if (onSaveExternal) onSaveExternal(freshRecs);
                     setHasUnsavedChanges(false);
-                    setSaveVerifiedMsg("Kaydedildi ✓");
-                    setTimeout(() => setSaveVerifiedMsg(null), 2500);
+                    
+                    const hasWeekendUpdate = recs.some(r => {
+                        const d = new Date(r.date + 'T12:00:00');
+                        return d.getDay() === 0 || d.getDay() === 6;
+                    });
+                    
+                    if (hasWeekendUpdate) {
+                        setSaveVerifiedMsg("Hafta sonu verileri de değiştirildi ve güncellendi ✓");
+                    } else {
+                        setSaveVerifiedMsg("Kaydedildi ✓");
+                    }
+                    setTimeout(() => setSaveVerifiedMsg(null), 3000);
                 } catch(e) {
                     console.error("Detail save error", e);
                     setSaveVerifiedMsg(null);
@@ -4572,3 +4615,67 @@
     </script>
 </body>
 </html>
+<!-- CONFIG BACKUPS FOR STANDALONE DEPLOYMENTS -->
+<!-- package.json
+{
+  "name": "ucuş-egitim-yoklama",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "lucide-react": "^0.292.0",
+    "xlsx": "^0.18.5",
+    "exceljs": "^4.4.0",
+    "clsx": "^2.1.0",
+    "tailwind-merge": "^2.2.1"
+  },
+  "devDependencies": {
+    "vite": "^6.2.0",
+    "@vitejs/plugin-react": "^4.2.1",
+    "typescript": "^5.8.2",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0"
+  }
+}
+-->
+<!-- tsconfig.json
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "useDefineForClassFields": true,
+    "lib": ["DOM", "DOM.Iterable", "ESNext"],
+    "allowJs": false,
+    "skipLibCheck": true,
+    "esModuleInterop": false,
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    "forceConsistentCasingInFileNames": true,
+    "module": "ESNext",
+    "moduleResolution": "Node",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx"
+  },
+  "include": ["vite.config.ts"]
+}
+-->
+<!-- vite.config.ts
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+
+export default defineConfig({
+  plugins: [react()],
+  server: {
+    port: 3000,
+    host: true
+  }
+});
+-->
