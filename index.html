@@ -323,157 +323,168 @@
             return rawTitle;
         };
 
-        const localData = {
-            getAircraft: () => JSON.parse(localStorage.getItem('ogm_aircraft') || JSON.stringify(INITIAL_AIRCRAFT)),
-            saveAircraft: (d) => localStorage.setItem('ogm_aircraft', JSON.stringify(d)),
-            getPersonnel: () => JSON.parse(localStorage.getItem('ogm_personnel') || JSON.stringify(INITIAL_PERSONNEL)),
-            savePersonnel: (d) => localStorage.setItem('ogm_personnel', JSON.stringify(d)),
-            getAttendance: () => JSON.parse(localStorage.getItem('ogm_attendance') || '[]'),
-            setAttendance: (data) => localStorage.setItem('ogm_attendance', JSON.stringify(data)),
-            saveAttendance: (newRecords) => {
-                const existing = localData.getAttendance();
-                const others = existing.filter(e => !newRecords.some(n => n.personId === e.personId && n.date === e.date));
-                // Only merge records that have a non-empty status (filter out deletion stubs)
-                const filteredNew = newRecords.filter(n => n.status && n.status !== '');
-                const merged = [...others, ...filteredNew];
-                localStorage.setItem('ogm_attendance', JSON.stringify(merged));
-                return merged;
-            }
-        };
-
         const memoryCache = {
             aircraft: null,
             personnel: null,
             attendance: null,
-            loaded: false
+            loaded: false,
+            preloadPromise: null
         };
 
-        const apiCall = async (action, payload = {}, timeoutMs = 120000) => {
-            const controller = new AbortController();
-            const timeoutId = timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : null; 
-            try {
-                const response = await fetch(GOOGLE_SCRIPT_URL, {
-                    method: 'POST',
-                    mode: 'cors',
-                    redirect: 'follow',
-                    body: JSON.stringify({ action, ...payload }),
-                    signal: controller.signal
-                });
-                if (timeoutId) clearTimeout(timeoutId);
-                const rawText = await response.text();
-                let json = null;
+        const apiCall = async (action, payload = {}, timeoutMs = 90000, retries = 3) => {
+            for (let attempt = 0; attempt <= retries; attempt++) {
+                const controller = new AbortController();
+                const timeoutId = timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : null; 
                 try {
-                    json = JSON.parse(rawText);
-                } catch (e) {
-                    // Response was plain text or non-JSON
+                    const response = await fetch(GOOGLE_SCRIPT_URL, {
+                        method: 'POST',
+                        mode: 'cors',
+                        redirect: 'follow',
+                        headers: {
+                            'Content-Type': 'text/plain;charset=UTF-8',
+                        },
+                        body: JSON.stringify({ action, ...payload }),
+                        signal: controller.signal
+                    });
+                    if (timeoutId) clearTimeout(timeoutId);
+
+                    if (!response.ok) {
+                        throw new Error(`Sunucu Hatası: ${response.status}`);
+                    }
+
+                    const rawText = await response.text();
+                    let json = null;
+                    try {
+                        json = JSON.parse(rawText);
+                    } catch (e) {
+                        throw new Error("Geçersiz JSON yanıtı (HTML veya geçici bağlantı hatası)");
+                    }
+
+                    if (json) {
+                        if (json.success === false) throw new Error(json.error || 'API Error');
+                        return json.data !== undefined ? json.data : json;
+                    }
+                    throw new Error("Sunucudan boş veri yanıtı alındı");
+                } catch (error) {
+                    if (timeoutId) clearTimeout(timeoutId);
+                    if (attempt < retries) {
+                        console.warn(`apiCall('${action}') deneme ${attempt + 1} başarısız (${error.message}), ${(attempt + 1) * 1000}ms sonra tekrar deneniyor...`);
+                        await new Promise(r => setTimeout(r, (attempt + 1) * 1000));
+                        continue;
+                    }
+                    console.error(`apiCall('${action}') tüm denemeler tükendi:`, error);
+                    throw error;
                 }
-                if (json) {
-                    if (json.success === false) throw new Error(json.error || 'API Error');
-                    return json.data !== undefined ? json.data : json;
-                }
-                return rawText;
-            } catch (error) {
-                if (timeoutId) clearTimeout(timeoutId);
-                if (error.name === 'AbortError') {
-                    console.warn(`API call '${action}' was aborted or timed out after ${timeoutMs}ms.`);
-                    return null;
-                }
-                throw error;
             }
         };
 
         const storageService = {
             preload: async () => {
-                try {
-                    const data = await apiCall('get_init_data');
-                    if (data && data.aircraft) {
-                        const formattedAC = data.aircraft.map(a => ({ ...a, id: String(a.id) }));
-                        localData.saveAircraft(formattedAC);
-                        memoryCache.aircraft = formattedAC;
-                    }
-                    if (data && data.personnel) {
-                        let formattedPL = data.personnel.map(p => {
-                            // TC No için tüm olası anahtar varyasyonlarını tara (TC NO, TC no, tc_no, TC, tcNo vb.)
-                            let foundTc = '';
-                            const tcKeys = ['tcNo', 'TC NO', 'TC no', 'tc_no', 'TC', 'tcno', 'TcNo'];
-                            for (const k of tcKeys) {
-                                if (p[k]) {
-                                    foundTc = String(p[k]);
-                                    break;
+                if (memoryCache.preloadPromise) return memoryCache.preloadPromise;
+
+                memoryCache.preloadPromise = (async () => {
+                    try {
+                        // Tam senkronizasyon ve canlı veri: Google E-Tablo sunucusundan doğrudan çekilir
+                        const [data, att] = await Promise.all([
+                            apiCall('get_init_data', {}, 90000),
+                            apiCall('get_attendance', {}, 90000)
+                        ]);
+
+                        if (data && data.aircraft) {
+                            const formattedAC = data.aircraft.map(a => ({ ...a, id: String(a.id) }));
+                            memoryCache.aircraft = formattedAC;
+                        } else if (!memoryCache.aircraft) {
+                            memoryCache.aircraft = INITIAL_AIRCRAFT;
+                        }
+
+                        if (data && data.personnel) {
+                            let formattedPL = data.personnel.map(p => {
+                                let foundTc = '';
+                                const tcKeys = ['tcNo', 'TC NO', 'TC no', 'tc_no', 'TC', 'tcno', 'TcNo'];
+                                for (const k of tcKeys) {
+                                    if (p[k]) {
+                                        foundTc = String(p[k]);
+                                        break;
+                                    }
                                 }
-                            }
-                            // Eğer hala bulunamadıysa içinde 'TC' geçen ilk anahtara bak
-                            if (!foundTc) {
-                                const altKey = Object.keys(p).find(k => k.toUpperCase().includes('TC'));
-                                if (altKey) foundTc = String(p[altKey]);
-                            }
+                                if (!foundTc) {
+                                    const altKey = Object.keys(p).find(k => k.toUpperCase().includes('TC'));
+                                    if (altKey) foundTc = String(p[altKey]);
+                                }
 
-                            return { 
-                                ...p, 
-                                id: String(p.id), 
-                                photoUrl: fixDriveUrl(p.photoUrl),
-                                tcNo: foundTc || ''
-                            };
-                        });
-                        INITIAL_PERSONNEL.forEach(initP => {
-                            if (!formattedPL.some(p => p.id === initP.id)) {
-                                formattedPL.push(initP);
-                            }
-                        });
-                        formattedPL.sort((a, b) => (a.rank || 999) - (b.rank || 999));
-                        localData.savePersonnel(formattedPL);
-                        memoryCache.personnel = formattedPL;
+                                return { 
+                                    ...p, 
+                                    id: String(p.id), 
+                                    photoUrl: fixDriveUrl(p.photoUrl),
+                                    tcNo: foundTc || ''
+                                };
+                            });
+                            INITIAL_PERSONNEL.forEach(initP => {
+                                if (!formattedPL.some(p => p.id === initP.id)) {
+                                    formattedPL.push(initP);
+                                }
+                            });
+                            formattedPL.sort((a, b) => (a.rank || 999) - (b.rank || 999));
+                            memoryCache.personnel = formattedPL;
+                        } else if (!memoryCache.personnel) {
+                            memoryCache.personnel = INITIAL_PERSONNEL;
+                        }
+
+                        if (att && Array.isArray(att)) {
+                            const formattedAtt = att.map(r => ({
+                                ...r,
+                                id: String(r.id),
+                                personId: String(r.personId),
+                                date: normalizeDate(r.date),
+                                status: r.status === 'İzinli' ? 'İzin' : r.status
+                            })).filter(r => r.status && r.status !== '');
+
+                            memoryCache.attendance = formattedAtt;
+                        } else if (!memoryCache.attendance) {
+                            memoryCache.attendance = [];
+                        }
+
+                        memoryCache.loaded = true;
+                    } catch (e) {
+                        console.error("Canlı veri yükleme hatası:", e);
+                        if (!memoryCache.aircraft) memoryCache.aircraft = INITIAL_AIRCRAFT;
+                        if (!memoryCache.personnel) memoryCache.personnel = INITIAL_PERSONNEL;
+                        if (!memoryCache.attendance) memoryCache.attendance = [];
+                        memoryCache.loaded = true;
+                        throw e;
+                    } finally {
+                        memoryCache.preloadPromise = null;
                     }
+                })();
 
-                    const att = await apiCall('get_attendance');
-                    if (att && Array.isArray(att)) {
-                        const formattedAtt = att.map(r => ({
-                            ...r,
-                            id: String(r.id),
-                            personId: String(r.personId),
-                            date: normalizeDate(r.date),
-                            status: r.status === 'İzinli' ? 'İzin' : r.status
-                        })).filter(r => r.status && r.status !== '');
-
-                        localData.setAttendance(formattedAtt);
-                        memoryCache.attendance = formattedAtt;
-                    }
-                    memoryCache.loaded = true;
-                } catch (e) {
-                    console.warn("Preload failed, using local", e);
-                    memoryCache.aircraft = localData.getAircraft();
-                    memoryCache.personnel = localData.getPersonnel();
-                    memoryCache.attendance = localData.getAttendance();
-                    memoryCache.loaded = true;
-                }
+                return memoryCache.preloadPromise;
             },
             refresh: async () => {
                 memoryCache.loaded = false;
+                memoryCache.preloadPromise = null;
                 await storageService.preload();
             },
-            getAttendanceSync: () => memoryCache.attendance || localData.getAttendance(),
-            getPersonnelSync: () => memoryCache.personnel || localData.getPersonnel(),
+            getAttendanceSync: () => memoryCache.attendance || [],
+            getPersonnelSync: () => memoryCache.personnel || [],
             getAircraft: async () => {
                 if (!memoryCache.loaded) await storageService.preload();
-                return memoryCache.aircraft || localData.getAircraft();
+                return memoryCache.aircraft || INITIAL_AIRCRAFT;
             },
             saveAircraft: async (data) => {
-                localData.saveAircraft(data);
                 memoryCache.aircraft = data;
-                try { await apiCall('save_aircraft', { aircraft: data }); } catch (e) { }
+                await apiCall('save_aircraft', { aircraft: data }, 60000);
             },
             getPersonnel: async () => {
                 if (!memoryCache.loaded) await storageService.preload();
-                return memoryCache.personnel || localData.getPersonnel();
+                return memoryCache.personnel || INITIAL_PERSONNEL;
             },
             savePersonnel: async (data) => {
-                localData.savePersonnel(data);
                 memoryCache.personnel = data;
-                try { await apiCall('save_personnel', { personnel: data }); } catch (e) { }
+                await apiCall('save_personnel', { personnel: data }, 60000);
             },
             getAttendance: async () => {
                 if (!memoryCache.loaded) await storageService.preload();
-                return memoryCache.attendance || localData.getAttendance();
+                return memoryCache.attendance || [];
             },
             saveAttendance: async (data) => {
                 const cleanRecords = (data || []).map(r => ({
@@ -490,15 +501,17 @@
                     aircraftTypeSnapshot: String(r.aircraftTypeSnapshot || '')
                 }));
 
-                const updatedFullList = localData.saveAttendance(cleanRecords);
-                memoryCache.attendance = updatedFullList;
+                // Bellekteki veriyi anında güncelle
+                const existing = memoryCache.attendance || [];
+                const others = existing.filter(e => !cleanRecords.some(n => n.personId === e.personId && n.date === e.date));
+                const filteredNew = cleanRecords.filter(n => n.status && n.status !== '');
+                const merged = [...others, ...filteredNew];
+                memoryCache.attendance = merged;
 
-                // Send to Google Sheets completely in background (non-blocking for instant local speed)
-                apiCall('save_attendance', { records: cleanRecords }, 45000).catch(e => {
-                    console.warn("Background Google Sheets save info:", e);
-                });
+                // DİĞER BİLGİSAYARLAR VE TELEFONLAR İÇİN GOOGLE TABLO'YA KAYDEDİLMESİNİ KESİNLİKLE BEKLE
+                await apiCall('save_attendance', { records: cleanRecords }, 90000);
 
-                return updatedFullList;
+                return merged;
             },
             fetchSafeImage: async (fileId) => {
                 if (window.photoCache[fileId]) return window.photoCache[fileId];
@@ -603,12 +616,7 @@
             const sortedCities = useMemo(() => {
                 let records = allAttendance;
                 if (!records || records.length === 0) {
-                    try {
-                        const local = localStorage.getItem('ogm_attendance');
-                        if (local) records = JSON.parse(local);
-                    } catch (e) {
-                        console.error("Failed to parse ogm_attendance", e);
-                    }
+                    records = storageService.getAttendanceSync();
                 }
                 if (!Array.isArray(records)) records = [];
                 
@@ -885,7 +893,7 @@
                     // Update state without refresh
                     const updatedList = plList.map(p => p.id === photoPerson.id ? { ...p, photoUrl: updatedUrl } : p);
                     setPlList(updatedList);
-                    localStorage.setItem('ogm_personnel', JSON.stringify(updatedList));
+                    memoryCache.personnel = updatedList;
                     
                     if (photoPerson) setPhotoPerson({ ...photoPerson, photoUrl: updatedUrl });
                     setTempPhotoData(null); // Önizlemeyi temizle
@@ -947,7 +955,7 @@
                         
                         const updatedList = plList.map(p => p.id === photoPerson.id ? { ...p, photoUrl: updatedUrl } : p);
                         setPlList(updatedList);
-                        localStorage.setItem('ogm_personnel', JSON.stringify(updatedList));
+                        memoryCache.personnel = updatedList;
                         
                         setPhotoPerson({ ...photoPerson, photoUrl: updatedUrl });
                         setTempPhotoData(null);
@@ -1767,7 +1775,7 @@
                              </Button>
                         </div>
                     </div>
-                    <div className="flex gap-2 mb-6 border-b border-forest-600 pb-2 flex-wrap">
+                    <div className="flex gap-2 mb-6 border-b border-forest-600 pb-2">
                         <button onClick={() => setTab('aircraft')} className={`px-4 py-2 rounded ${tab === 'aircraft' ? 'bg-forest-600 text-white' : 'text-forest-300'}`}>Hava Araçları</button>
                         <button onClick={() => setTab('personnel')} className={`px-4 py-2 rounded ${tab === 'personnel' ? 'bg-forest-600 text-white' : 'text-forest-300'}`}>Personel</button>
                         <button onClick={() => setTab('harcirah')} className={`px-4 py-2 rounded ${tab === 'harcirah' ? 'bg-forest-600 text-white' : 'text-forest-300'}`}>Harcırah</button>
@@ -3041,6 +3049,8 @@
                 }
                 } catch (err) {
                     console.error("Error loading dashboard data:", err);
+                } finally {
+                    setIsUnitsLoading(false);
                 }
             }, []);
 
@@ -3068,37 +3078,27 @@
 
             useEffect(() => {
                 setIsUnitsLoading(true);
-                const acLocal = localStorage.getItem('ogm_aircraft');
-                const plLocal = localStorage.getItem('ogm_personnel');
+                setLoading(false); // Tam ekran kilidi yok, birimler alanı flu ve "Veriler alınıyor..." olarak kalır
                 
-                if (acLocal && plLocal) {
-                    // Load cached data synchronously first for instant initial display
-                    memoryCache.aircraft = localData.getAircraft();
-                    memoryCache.personnel = localData.getPersonnel();
-                    memoryCache.attendance = localData.getAttendance();
-                    memoryCache.loaded = true;
-                    
-                    loadDashboardData();
-                    setLoading(false); // Hide full-screen spinner
-                    
-                    // Do NOT block UI. Let user interact immediately.
-                    // Silently sync in the background.
-                    setIsUnitsLoading(false); 
-                    storageService.preload()
-                        .then(() => loadDashboardData())
-                        .catch(e => console.warn("Background preload silent fail", e));
-                } else {
-                    // First time loading - show full loader until data preloads
-                    setLoading(true);
-                    setIsUnitsLoading(true);
-                    storageService.preload()
-                        .then(() => loadDashboardData())
-                        .catch(e => console.error(e))
-                        .finally(() => {
-                            setLoading(false);
-                            setIsUnitsLoading(false);
-                        });
-                }
+                // Cihazlar ve bilgisayarlar arası veri senkronizasyonunun bozulmaması için eski önbellek kalıntılarını temizle
+                try {
+                    localStorage.removeItem('ogm_attendance');
+                    localStorage.removeItem('ogm_personnel');
+                    localStorage.removeItem('ogm_aircraft');
+                } catch(e) {}
+
+                // Canlı sunucu verilerini doğrudan Google E-Tablo'dan çek
+                storageService.preload()
+                    .then(() => {
+                        loadDashboardData();
+                    })
+                    .catch(e => {
+                        console.error("Canlı veri alma hatası:", e);
+                        loadDashboardData();
+                    })
+                    .finally(() => {
+                        setIsUnitsLoading(false);
+                    });
             }, [loadDashboardData]);
 
             const handleBackToDashboard = () => {
@@ -3107,15 +3107,11 @@
                 }
                 setSelModel(null);
                 setIsOrderChanged(false);
-                
-                // Immediately return to active dashboard without blocking
-                setIsUnitsLoading(false);
-                loadDashboardData();
-                
-                // Silent background update in case something changed externally
-                storageService.preload()
+                setIsUnitsLoading(true);
+                storageService.refresh()
                     .then(() => loadDashboardData())
-                    .catch(e => console.warn("Background refresh silent fail", e));
+                    .catch(e => console.warn("Background refresh silent fail", e))
+                    .finally(() => setIsUnitsLoading(false));
             };
 
             const handleSyncOvertime = async () => {
@@ -3343,17 +3339,6 @@
                     return savePromiseRef.current;
                 }
 
-                const daysCheck = getDaysInRange(rangeStartDate, rangeEndDate);
-                const hasWeekendInSelection = daysCheck.some(d => d.getDay() === 0 || d.getDay() === 6);
-                const isWeeklyModeCheck = rangeStartDate !== rangeEndDate;
-                
-                if (!isAutoSave && isWeeklyModeCheck && hasWeekendInSelection) {
-                    const confirmed = window.confirm(`Seçtiğiniz tarih aralığı (${rangeStartDate} ile ${rangeEndDate}) hafta sonunu içermektedir.\n\nYaptığınız seçimler (eğer seçilmişse) hafta sonu günlerine de (Cumartesi ve Pazar) aynen uygulanacaktır.\n\nOnaylıyor musunuz?`);
-                    if (!confirmed) {
-                        return;
-                    }
-                }
-
                 const runSave = async () => {
                     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
                     if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
@@ -3427,8 +3412,17 @@
 
                         if (!s?.status) return;
 
-                        // Removed the blocking skip logic here so that explicitly selected weekends in range get the status!
-                        // "Hafta sonu dahil" logic from main screen transfers cleanly over explicitly selected date ranges.
+                        if (isWeekend && isWeeklyMode && !s.includeWeekend) {
+                            const existingRec = allRecs.find(r => r.personId === p.id && r.date === dStr);
+                            if (existingRec) {
+                                counter++;
+                                recs.push({
+                                    ...existingRec,
+                                    status: '' 
+                                });
+                            }
+                            return;
+                        }
 
                         const dType = s.dutyType || DutyType.PLANNED;
                         
@@ -3448,30 +3442,22 @@
                                                      (existingSun && existingSun.status && existingSun.status !== '');
 
                              if (hasWeekendJunk && (!shouldIncludeWeekend || !s.includeWeekend)) {
-                                 const isSatInSelection = dayStrings.includes(satStr);
-                                 const isSunInSelection = dayStrings.includes(sunStr);
-                                 
-                                 if (!isSatInSelection && existingSat) {
-                                     counter++;
-                                     recs.push({
-                                        id: `${timestamp}-${counter}-cleanup-sat-${p.id}`,
-                                        date: satStr,
-                                        personId: p.id,
-                                        status: '', 
-                                        aircraftTypeSnapshot: selModel || undefined
-                                     });
-                                 }
-                                 
-                                 if (!isSunInSelection && existingSun) {
-                                     counter++;
-                                     recs.push({
-                                        id: `${timestamp}-${counter}-cleanup-sun-${p.id}`,
-                                        date: sunStr,
-                                        personId: p.id,
-                                        status: '', 
-                                        aircraftTypeSnapshot: selModel || undefined
-                                     });
-                                 }
+                                 counter++;
+                                 recs.push({
+                                    id: `${timestamp}-${counter}-cleanup-sat-${p.id}`,
+                                    date: satStr,
+                                    personId: p.id,
+                                    status: '', 
+                                    aircraftTypeSnapshot: selModel || undefined
+                                 });
+                                 counter++;
+                                 recs.push({
+                                    id: `${timestamp}-${counter}-cleanup-sun-${p.id}`,
+                                    date: sunStr,
+                                    personId: p.id,
+                                    status: '', 
+                                    aircraftTypeSnapshot: selModel || undefined
+                                 });
                              }
                         }
 
@@ -3647,13 +3633,13 @@
                 }
             };
 
-            const openDetailModal = async (person) => {
+            const openDetailModal = (person) => {
                 if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
                 if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
                 setAutoSaveCountdown(null);
 
                 if (hasUnsavedChanges) {
-                    await save(true);
+                    save(true);
                 }
                 const freshRecs = storageService.getAttendanceSync() || allRecs;
 
@@ -3679,25 +3665,19 @@
                     const r = freshRecs.find(rec => rec.personId === person.id && rec.date === dStr && rec.status && rec.status !== '');
                     const isWe = d.getDay() === 0 || d.getDay() === 6;
                     const validStatuses = Object.values(AttendanceStatus);
-                    
-                    const isInSelectedRange = dStr >= rangeStartDate && dStr <= rangeEndDate;
 
                     if (r && r.status && validStatuses.includes(r.status)) {
                         initialStates[dStr] = { ...r };
-                    } else if (isInSelectedRange && att[person.id] && att[person.id].status) {
-                        if (isWe && !att[person.id].includeWeekend) {
-                            initialStates[dStr] = { status: undefined };
-                        } else {
-                            initialStates[dStr] = {
-                                status: att[person.id].status,
-                                dutyLocation: att[person.id].dutyLocation,
-                                dutyLocationDetail: att[person.id].dutyLocationDetail,
-                                leaveType: att[person.id].leaveType,
-                                note: att[person.id].note,
-                                dutyType: att[person.id].dutyType,
-                                includeWeekend: att[person.id].includeWeekend
-                            };
-                        }
+                    } else if (dStr === rangeStartDate && att[person.id] && att[person.id].status) {
+                        initialStates[dStr] = {
+                            status: att[person.id].status,
+                            dutyLocation: att[person.id].dutyLocation,
+                            dutyLocationDetail: att[person.id].dutyLocationDetail,
+                            leaveType: att[person.id].leaveType,
+                            note: att[person.id].note,
+                            dutyType: att[person.id].dutyType,
+                            includeWeekend: att[person.id].includeWeekend
+                        };
                     } else {
                         const prevDate = new Date(d); prevDate.setDate(prevDate.getDate() - 1);
                         const prevStr = normalizeDate(prevDate);
@@ -3705,21 +3685,6 @@
 
                         if (isWe) {
                             initialStates[dStr] = { status: undefined };
-                            if (prevRec && prevRec.status) {
-                                const shouldInclude = prevRec.status === AttendanceStatus.DUTY || 
-                                                    (prevRec.status === AttendanceStatus.LEAVE && prevRec.leaveType === LeaveType.OVERTIME);
-                                if (shouldInclude && prevRec.includeWeekend) {
-                                    initialStates[dStr] = { 
-                                        status: prevRec.status,
-                                        dutyLocation: prevRec.dutyLocation,
-                                        dutyLocationDetail: prevRec.dutyLocationDetail,
-                                        dutyType: prevRec.dutyType,
-                                        leaveType: prevRec.leaveType,
-                                        note: prevRec.note,
-                                        includeWeekend: true
-                                    };
-                                }
-                            }
                         } else {
                             if (prevRec) initialStates[dStr] = { ...prevRec, id: undefined };
                             else initialStates[dStr] = { status: AttendanceStatus.PRESENT };
@@ -3879,18 +3844,8 @@
 
                     if (onSaveExternal) onSaveExternal(freshRecs);
                     setHasUnsavedChanges(false);
-                    
-                    const hasWeekendUpdate = recs.some(r => {
-                        const d = new Date(r.date + 'T12:00:00');
-                        return d.getDay() === 0 || d.getDay() === 6;
-                    });
-                    
-                    if (hasWeekendUpdate) {
-                        setSaveVerifiedMsg("Hafta sonu verileri de değiştirildi ve güncellendi ✓");
-                    } else {
-                        setSaveVerifiedMsg("Kaydedildi ✓");
-                    }
-                    setTimeout(() => setSaveVerifiedMsg(null), 3000);
+                    setSaveVerifiedMsg("Kaydedildi ✓");
+                    setTimeout(() => setSaveVerifiedMsg(null), 2500);
                 } catch(e) {
                     console.error("Detail save error", e);
                     setSaveVerifiedMsg(null);
@@ -4260,10 +4215,10 @@
                             )})}
                         </div>
                         {isUnitsLoading && (
-                            <div className="absolute inset-0 flex flex-col items-center justify-center bg-forest-950/80 rounded z-20 backdrop-blur-md">
-                                <Loader2 className="animate-spin text-teal-400 mb-3" size={40} />
-                                <span className="text-base sm:text-lg font-bold text-teal-300 bg-forest-900/95 px-6 py-3 rounded-xl border border-teal-500/80 shadow-2xl animate-pulse tracking-wide uppercase">
-                                    Veriler Yükleniyor...
+                            <div className="absolute inset-0 flex flex-col items-center justify-center bg-forest-950/85 rounded-lg z-20 backdrop-blur-md p-4 text-center">
+                                <Loader2 className="animate-spin text-teal-400 mb-3" size={44} />
+                                <span className="text-base sm:text-lg font-bold text-teal-300 bg-forest-900/95 px-6 py-3 rounded-xl border border-teal-500/80 shadow-2xl tracking-wide uppercase animate-pulse">
+                                    Veriler alınıyor...
                                 </span>
                             </div>
                         )}
@@ -4615,67 +4570,3 @@
     </script>
 </body>
 </html>
-<!-- CONFIG BACKUPS FOR STANDALONE DEPLOYMENTS -->
-<!-- package.json
-{
-  "name": "ucuş-egitim-yoklama",
-  "version": "1.0.0",
-  "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview",
-    "lint": "tsc --noEmit"
-  },
-  "dependencies": {
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "lucide-react": "^0.292.0",
-    "xlsx": "^0.18.5",
-    "exceljs": "^4.4.0",
-    "clsx": "^2.1.0",
-    "tailwind-merge": "^2.2.1"
-  },
-  "devDependencies": {
-    "vite": "^6.2.0",
-    "@vitejs/plugin-react": "^4.2.1",
-    "typescript": "^5.8.2",
-    "@types/react": "^18.2.0",
-    "@types/react-dom": "^18.2.0"
-  }
-}
--->
-<!-- tsconfig.json
-{
-  "compilerOptions": {
-    "target": "ESNext",
-    "useDefineForClassFields": true,
-    "lib": ["DOM", "DOM.Iterable", "ESNext"],
-    "allowJs": false,
-    "skipLibCheck": true,
-    "esModuleInterop": false,
-    "allowSyntheticDefaultImports": true,
-    "strict": true,
-    "forceConsistentCasingInFileNames": true,
-    "module": "ESNext",
-    "moduleResolution": "Node",
-    "resolveJsonModule": true,
-    "isolatedModules": true,
-    "noEmit": true,
-    "jsx": "react-jsx"
-  },
-  "include": ["vite.config.ts"]
-}
--->
-<!-- vite.config.ts
-import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
-
-export default defineConfig({
-  plugins: [react()],
-  server: {
-    port: 3000,
-    host: true
-  }
-});
--->
