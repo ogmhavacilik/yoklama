@@ -1,0 +1,6 @@
+{
+  "name": "BAKIM ŞUBE YOKLAMA",
+  "description": "Bakım Şube Yoklama ve Personel Takip Sistemi",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
