@@ -323,11 +323,31 @@
             return rawTitle;
         };
 
+        const fastCache = {
+            get: (key, fallback) => {
+                try {
+                    const d = localStorage.getItem('ogm_fast_' + key);
+                    return d ? JSON.parse(d) : fallback;
+                } catch (e) {
+                    return fallback;
+                }
+            },
+            set: (key, val) => {
+                try {
+                    localStorage.setItem('ogm_fast_' + key, JSON.stringify(val));
+                } catch (e) {}
+            }
+        };
+
+        const cachedAircraft = fastCache.get('aircraft', null);
+        const cachedPersonnel = fastCache.get('personnel', null);
+        const cachedAttendance = fastCache.get('attendance', null);
+
         const memoryCache = {
-            aircraft: null,
-            personnel: null,
-            attendance: null,
-            loaded: false,
+            aircraft: cachedAircraft,
+            personnel: cachedPersonnel,
+            attendance: cachedAttendance,
+            loaded: !!(cachedAircraft && cachedPersonnel && cachedAttendance),
             preloadPromise: null
         };
 
@@ -384,7 +404,7 @@
 
                 memoryCache.preloadPromise = (async () => {
                     try {
-                        // Tam senkronizasyon ve canlı veri: Google E-Tablo sunucusundan doğrudan çekilir
+                        // Canlı sunucu verilerini arka planda paralel çek
                         const [data, att] = await Promise.all([
                             apiCall('get_init_data', {}, 90000),
                             apiCall('get_attendance', {}, 90000)
@@ -393,6 +413,7 @@
                         if (data && data.aircraft) {
                             const formattedAC = data.aircraft.map(a => ({ ...a, id: String(a.id) }));
                             memoryCache.aircraft = formattedAC;
+                            fastCache.set('aircraft', formattedAC);
                         } else if (!memoryCache.aircraft) {
                             memoryCache.aircraft = INITIAL_AIRCRAFT;
                         }
@@ -426,6 +447,7 @@
                             });
                             formattedPL.sort((a, b) => (a.rank || 999) - (b.rank || 999));
                             memoryCache.personnel = formattedPL;
+                            fastCache.set('personnel', formattedPL);
                         } else if (!memoryCache.personnel) {
                             memoryCache.personnel = INITIAL_PERSONNEL;
                         }
@@ -440,6 +462,7 @@
                             })).filter(r => r.status && r.status !== '');
 
                             memoryCache.attendance = formattedAtt;
+                            fastCache.set('attendance', formattedAtt);
                         } else if (!memoryCache.attendance) {
                             memoryCache.attendance = [];
                         }
@@ -460,30 +483,29 @@
                 return memoryCache.preloadPromise;
             },
             refresh: async () => {
-                memoryCache.loaded = false;
                 memoryCache.preloadPromise = null;
                 await storageService.preload();
             },
+            getAircraftSync: () => memoryCache.aircraft || INITIAL_AIRCRAFT,
+            getPersonnelSync: () => memoryCache.personnel || INITIAL_PERSONNEL,
             getAttendanceSync: () => memoryCache.attendance || [],
-            getPersonnelSync: () => memoryCache.personnel || [],
             getAircraft: async () => {
-                if (!memoryCache.loaded) await storageService.preload();
                 return memoryCache.aircraft || INITIAL_AIRCRAFT;
             },
             saveAircraft: async (data) => {
                 memoryCache.aircraft = data;
+                fastCache.set('aircraft', data);
                 await apiCall('save_aircraft', { aircraft: data }, 60000);
             },
             getPersonnel: async () => {
-                if (!memoryCache.loaded) await storageService.preload();
                 return memoryCache.personnel || INITIAL_PERSONNEL;
             },
             savePersonnel: async (data) => {
                 memoryCache.personnel = data;
+                fastCache.set('personnel', data);
                 await apiCall('save_personnel', { personnel: data }, 60000);
             },
             getAttendance: async () => {
-                if (!memoryCache.loaded) await storageService.preload();
                 return memoryCache.attendance || [];
             },
             saveAttendance: async (data) => {
@@ -501,14 +523,15 @@
                     aircraftTypeSnapshot: String(r.aircraftTypeSnapshot || '')
                 }));
 
-                // Bellekteki veriyi anında güncelle
+                // Bellekteki ve yerel önbellekteki veriyi ANINDA güncelle
                 const existing = memoryCache.attendance || [];
                 const others = existing.filter(e => !cleanRecords.some(n => n.personId === e.personId && n.date === e.date));
                 const filteredNew = cleanRecords.filter(n => n.status && n.status !== '');
                 const merged = [...others, ...filteredNew];
                 memoryCache.attendance = merged;
+                fastCache.set('attendance', merged);
 
-                // DİĞER BİLGİSAYARLAR VE TELEFONLAR İÇİN GOOGLE TABLO'YA KAYDEDİLMESİNİ KESİNLİKLE BEKLE
+                // DİĞER BİLGİSAYARLAR VE TELEFONLAR İÇİN GOOGLE TABLO'YA KAYDEDİLMESİNİ BEKLE
                 await apiCall('save_attendance', { records: cleanRecords }, 90000);
 
                 return merged;
@@ -2930,127 +2953,119 @@
             }, []);
 
             // Data Load
-            const loadDashboardData = useCallback(async () => {
-                setIsUnitsLoading(true);
+            const loadDashboardData = useCallback(() => {
                 try {
-                const [ac, pl, [recs, syncedPl]] = await Promise.all([
-                    storageService.getAircraft(),
-                    storageService.getPersonnel(),
-                    Promise.all([
-                        storageService.getAttendanceSync(),
-                        storageService.getPersonnelSync()
-                    ])
-                ]);
+                    const ac = storageService.getAircraftSync();
+                    const pl = storageService.getPersonnelSync();
+                    const recs = storageService.getAttendanceSync();
 
-                // DATA MIGRATION: Remove old combined unit and ensure new ones exist
-                let updatedAc = [...ac];
-                const oldUnitIndex = updatedAc.findIndex(a => a.model === 'TEKNİK EKİP VE DESTEK');
-                let modified = false;
-                
-                if (oldUnitIndex !== -1) {
-                    updatedAc.splice(oldUnitIndex, 1);
-                    modified = true;
-                }
-                
-                if (!updatedAc.find(a => a.model === AircraftModel.TEKNIK_EKIP)) {
-                    updatedAc.push({ id: '24', tailNumber: 'MERKEZ', model: AircraftModel.TEKNIK_EKIP, category: AircraftCategory.TECHNICAL, city: 'Ankara' });
-                    modified = true;
-                }
-                if (!updatedAc.find(a => a.model === AircraftModel.YER_DESTEK)) {
-                    updatedAc.push({ id: '25', tailNumber: 'DESTEK', model: AircraftModel.YER_DESTEK, category: AircraftCategory.GROUND, city: 'Ankara' });
-                    modified = true;
-                }
-
-                if (modified) {
-                    storageService.saveAircraft(updatedAc);
-                }
-
-                setInv(updatedAc);
-                const uniqueModels = [...new Set(updatedAc.map(a => a.model))].filter(m => m && m.length > 1 && m !== 'e' && m !== 'İDARİ BİRİM' && m !== 'İDARİ').sort();
-                setModels(uniqueModels);
-                setAllPersonnel(syncedPl || pl);
-                if (!hasUnsavedChangesRef.current && !savePromiseRef.current) {
-                    setAllRecs(recs || []);
-                }
-
-                const finalPersonnel = syncedPl || pl;
-                if (finalPersonnel.length > 0) {
-                    const statusMap = {};
-                    const today = getTodayString();
+                    // DATA MIGRATION: Remove old combined unit and ensure new ones exist
+                    let updatedAc = [...ac];
+                    const oldUnitIndex = updatedAc.findIndex(a => a.model === 'TEKNİK EKİP VE DESTEK');
+                    let modified = false;
                     
-                    const specificAircraftTags = uniqueModels
-                        .filter(m => m !== AircraftModel.YER_DESTEK && m !== AircraftModel.TEKNIK_EKIP && m !== AircraftModel.IDARI_BIRIM)
-                        .map(m => m.replace(/[^a-zA-Z0-9ğüşıöçĞÜŞİÖÇ]/g, '').toLocaleUpperCase('tr-TR'));
+                    if (oldUnitIndex !== -1) {
+                        updatedAc.splice(oldUnitIndex, 1);
+                        modified = true;
+                    }
+                    
+                    if (!updatedAc.find(a => a.model === AircraftModel.TEKNIK_EKIP)) {
+                        updatedAc.push({ id: '24', tailNumber: 'MERKEZ', model: AircraftModel.TEKNIK_EKIP, category: AircraftCategory.TECHNICAL, city: 'Ankara' });
+                        modified = true;
+                    }
+                    if (!updatedAc.find(a => a.model === AircraftModel.YER_DESTEK)) {
+                        updatedAc.push({ id: '25', tailNumber: 'DESTEK', model: AircraftModel.YER_DESTEK, category: AircraftCategory.GROUND, city: 'Ankara' });
+                        modified = true;
+                    }
 
-                    uniqueModels.forEach(m => {
-                        const mNameNormalized = m.replace(/[^a-zA-Z0-9ğüşıöçĞÜŞİÖÇ]/g, '').toLocaleUpperCase('tr-TR');
+                    if (modified) {
+                        storageService.saveAircraft(updatedAc);
+                    }
+
+                    setInv(updatedAc);
+                    const uniqueModels = [...new Set(updatedAc.map(a => a.model))].filter(m => m && m.length > 1 && m !== 'e' && m !== 'İDARİ BİRİM' && m !== 'İDARİ').sort();
+                    setModels(uniqueModels);
+                    setAllPersonnel(pl);
+                    if (!hasUnsavedChangesRef.current && !savePromiseRef.current) {
+                        setAllRecs(recs || []);
+                    }
+
+                    const finalPersonnel = pl;
+                    if (finalPersonnel.length > 0) {
+                        const statusMap = {};
+                        const today = getTodayString();
                         
-                        const relevantPersonnel = finalPersonnel.filter(p => {
-                            // EXCLUDE MANAGEMENT NAMES FROM REGULAR AIRCRAFT LISTS
-                            if (YONETIM_NAMES.includes(p.fullName)) return false;
+                        const specificAircraftTags = uniqueModels
+                            .filter(m => m !== AircraftModel.YER_DESTEK && m !== AircraftModel.TEKNIK_EKIP && m !== AircraftModel.IDARI_BIRIM)
+                            .map(m => m.replace(/[^a-zA-Z0-9ğüşıöçĞÜŞİÖÇ]/g, '').toLocaleUpperCase('tr-TR'));
 
-                            const pStart = p.activeFrom || '2000-01-01';
-                            const pEnd = p.activeUntil || '2099-12-31';
-                            if (today < pStart || today > pEnd) return false;
+                        uniqueModels.forEach(m => {
+                            const mNameNormalized = m.replace(/[^a-zA-Z0-9ğüşıöçĞÜŞİÖÇ]/g, '').toLocaleUpperCase('tr-TR');
+                            
+                            const relevantPersonnel = finalPersonnel.filter(p => {
+                                // EXCLUDE MANAGEMENT NAMES FROM REGULAR AIRCRAFT LISTS
+                                if (YONETIM_NAMES.includes(p.fullName)) return false;
 
-                            // 1. PRIORITIZE EXPLICIT UNIT ASSIGNMENT
-                            if (p.unit) {
-                                return p.unit === m;
-                            }
+                                const pStart = p.activeFrom || '2000-01-01';
+                                const pEnd = p.activeUntil || '2099-12-31';
+                                if (today < pStart || today > pEnd) return false;
 
-                            // 2. FALLBACK TO TITLE/ROLE MATCHING
-                            const titleUpper = (p.title || '').toLocaleUpperCase('tr-TR');
-                            const role = p.role;
-                            const tClean = titleUpper.replace(/[^a-zA-Z0-9ğüşıöçĞÜŞİÖÇ]/g, '');
+                                // 1. PRIORITIZE EXPLICIT UNIT ASSIGNMENT
+                                if (p.unit) {
+                                    return p.unit === m;
+                                }
 
-                            const belongsToSpecificAircraft = specificAircraftTags.some(tag => tClean.includes(tag));
+                                // 2. FALLBACK TO TITLE/ROLE MATCHING
+                                const titleUpper = (p.title || '').toLocaleUpperCase('tr-TR');
+                                const role = p.role;
+                                const tClean = titleUpper.replace(/[^a-zA-Z0-9ğüşıöçĞÜŞİÖÇ]/g, '');
 
-                            if (m === AircraftModel.YER_DESTEK) {
-                                if (p.fullName.includes('SERKAN KOTAN')) return true; // Force include SERKAN KOTAN
-                                if (belongsToSpecificAircraft) return false; 
-                                const isTechnicalRole = titleUpper.includes('UÇAK TEKNİ') || titleUpper.includes('MÜHENDİS');
-                                if (isTechnicalRole) return false;
+                                const belongsToSpecificAircraft = specificAircraftTags.some(tag => tClean.includes(tag));
 
-                                const isGroundRole = [Role.DRIVER, Role.CLEANING, Role.KITCHEN, Role.TEA_SERVICE, Role.OTHER].includes(role);
-                                const isGroundTitle = titleUpper.includes('MEMUR') || titleUpper.includes('İŞÇİ') || titleUpper.includes('ŞÖFÖR');
-                                return isGroundRole || isGroundTitle;
-                            } else if (m === AircraftModel.TEKNIK_EKIP) {
-                                if (p.fullName.includes('SERKAN KOTAN')) return false; // Force exclude SERKAN KOTAN
-                                if (belongsToSpecificAircraft) return false;
-                                return titleUpper.includes('UÇAK TEKNİ') || titleUpper.includes('MÜHENDİS');
-                            } else {
-                                return tClean.includes(mNameNormalized);
-                            }
+                                if (m === AircraftModel.YER_DESTEK) {
+                                    if (p.fullName.includes('SERKAN KOTAN')) return true; // Force include SERKAN KOTAN
+                                    if (belongsToSpecificAircraft) return false; 
+                                    const isTechnicalRole = titleUpper.includes('UÇAK TEKNİ') || titleUpper.includes('MÜHENDİS');
+                                    if (isTechnicalRole) return false;
+
+                                    const isGroundRole = [Role.DRIVER, Role.CLEANING, Role.KITCHEN, Role.TEA_SERVICE, Role.OTHER].includes(role);
+                                    const isGroundTitle = titleUpper.includes('MEMUR') || titleUpper.includes('İŞÇİ') || titleUpper.includes('ŞÖFÖR');
+                                    return isGroundRole || isGroundTitle;
+                                } else if (m === AircraftModel.TEKNIK_EKIP) {
+                                    if (p.fullName.includes('SERKAN KOTAN')) return false; // Force exclude SERKAN KOTAN
+                                    if (belongsToSpecificAircraft) return false;
+                                    return titleUpper.includes('UÇAK TEKNİ') || titleUpper.includes('MÜHENDİS');
+                                } else {
+                                    return tClean.includes(mNameNormalized);
+                                }
+                            });
+
+                            const pilots = relevantPersonnel.filter(p => p.role === Role.PILOT || (p.title && p.title.toLocaleUpperCase('tr-TR').includes('PİLOT')));
+                            const techs = relevantPersonnel.filter(p => !pilots.includes(p));
+
+                            const pilotDataExists = pilots.length > 0 && pilots.some(p => (recs || []).some(r => r.date === today && r.personId === p.id));
+                            const techDataExists = techs.length > 0 && techs.some(p => (recs || []).some(r => r.date === today && r.personId === p.id));
+                            const groundDataExists = relevantPersonnel.length > 0 && relevantPersonnel.some(p => (recs || []).some(r => r.date === today && r.personId === p.id));
+
+                            const isGroundUnit = m === AircraftModel.YER_DESTEK;
+                            const isTechnicalUnit = m === AircraftModel.TEKNIK_EKIP;
+
+                            statusMap[m] = {
+                                pilotMissing: !isGroundUnit && !isTechnicalUnit && pilots.length > 0 && !pilotDataExists,
+                                techMissing: (!isGroundUnit && techs.length > 0 && !techDataExists) || (isTechnicalUnit && !techDataExists),
+                                groundMissing: isGroundUnit && !groundDataExists
+                            };
                         });
 
-                        const pilots = relevantPersonnel.filter(p => p.role === Role.PILOT || (p.title && p.title.toLocaleUpperCase('tr-TR').includes('PİLOT')));
-                        const techs = relevantPersonnel.filter(p => !pilots.includes(p));
+                        // Check YONETIM Status
+                        const yonetimMembers = finalPersonnel.filter(p => YONETIM_NAMES.includes(p.fullName));
+                        const yonetimHasData = yonetimMembers.some(p => (recs || []).some(r => r.date === today && r.personId === p.id));
+                        statusMap['YÖNETİM'] = { missing: !yonetimHasData && yonetimMembers.length > 0 };
 
-                        const pilotDataExists = pilots.length > 0 && pilots.some(p => (recs || []).some(r => r.date === today && r.personId === p.id));
-                        const techDataExists = techs.length > 0 && techs.some(p => (recs || []).some(r => r.date === today && r.personId === p.id));
-                        const groundDataExists = relevantPersonnel.length > 0 && relevantPersonnel.some(p => (recs || []).some(r => r.date === today && r.personId === p.id));
-
-                        const isGroundUnit = m === AircraftModel.YER_DESTEK;
-                        const isTechnicalUnit = m === AircraftModel.TEKNIK_EKIP;
-
-                        statusMap[m] = {
-                            pilotMissing: !isGroundUnit && !isTechnicalUnit && pilots.length > 0 && !pilotDataExists,
-                            techMissing: (!isGroundUnit && techs.length > 0 && !techDataExists) || (isTechnicalUnit && !techDataExists),
-                            groundMissing: isGroundUnit && !groundDataExists
-                        };
-                    });
-
-                    // Check YONETIM Status
-                    const yonetimMembers = finalPersonnel.filter(p => YONETIM_NAMES.includes(p.fullName));
-                    const yonetimHasData = yonetimMembers.some(p => (recs || []).some(r => r.date === today && r.personId === p.id));
-                    statusMap['YÖNETİM'] = { missing: !yonetimHasData && yonetimMembers.length > 0 };
-
-                    setDashboardStatus(statusMap);
-                }
+                        setDashboardStatus(statusMap);
+                    }
                 } catch (err) {
                     console.error("Error loading dashboard data:", err);
-                } finally {
-                    setIsUnitsLoading(false);
                 }
             }, []);
 
@@ -3076,28 +3091,29 @@
                 }
             };
 
-            useEffect(() => {
-                setIsUnitsLoading(true);
-                setLoading(false); // Tam ekran kilidi yok, birimler alanı flu ve "Veriler alınıyor..." olarak kalır
-                
-                // Cihazlar ve bilgisayarlar arası veri senkronizasyonunun bozulmaması için eski önbellek kalıntılarını temizle
-                try {
-                    localStorage.removeItem('ogm_attendance');
-                    localStorage.removeItem('ogm_personnel');
-                    localStorage.removeItem('ogm_aircraft');
-                } catch(e) {}
+            const [isLiveSyncing, setIsLiveSyncing] = useState(false);
 
-                // Canlı sunucu verilerini doğrudan Google E-Tablo'dan çek
+            useEffect(() => {
+                // 1. Önbellekteki veya varsayılan verilerle ANINDA (0 milisaniyede) aç
+                loadDashboardData();
+                setLoading(false);
+                
+                // Eğer daha önce kaydedilmiş veri varsa birimler hemen açılır, kullanıcı asla kilitlenmez
+                const hasCachedData = memoryCache.attendance !== null && memoryCache.attendance.length > 0;
+                setIsUnitsLoading(!hasCachedData);
+                setIsLiveSyncing(true);
+
+                // 2. Canlı Google E-Tablo sunucu verilerini arka planda çek ve sessizce eşitle
                 storageService.preload()
                     .then(() => {
                         loadDashboardData();
                     })
                     .catch(e => {
-                        console.error("Canlı veri alma hatası:", e);
-                        loadDashboardData();
+                        console.warn("Arka plan canlı veri senkronizasyonu uyarısı:", e);
                     })
                     .finally(() => {
                         setIsUnitsLoading(false);
+                        setIsLiveSyncing(false);
                     });
             }, [loadDashboardData]);
 
@@ -3107,11 +3123,8 @@
                 }
                 setSelModel(null);
                 setIsOrderChanged(false);
-                setIsUnitsLoading(true);
-                storageService.refresh()
-                    .then(() => loadDashboardData())
-                    .catch(e => console.warn("Background refresh silent fail", e))
-                    .finally(() => setIsUnitsLoading(false));
+                // ANINDA VE SIFIR GECİKMELİ DÖNÜŞ: Sunucu sorgusu beklemeden, mevcut bellek verisiyle anında göster
+                loadDashboardData();
             };
 
             const handleSyncOvertime = async () => {
@@ -4195,10 +4208,23 @@
 
             if (!selModel) return (
                 <div className="container mx-auto p-4 max-w-5xl space-y-8 animate-fade-in relative">
-                    <h1 className="text-3xl font-bold text-white mb-4">Yoklama Takip</h1>
+                    <div className="flex items-center justify-between mb-4">
+                        <h1 className="text-3xl font-bold text-white">Yoklama Takip</h1>
+                        {isLiveSyncing ? (
+                            <span className="text-xs font-medium text-teal-300 flex items-center gap-1.5 bg-forest-900 px-3 py-1.5 rounded-lg border border-teal-500/40 shadow-sm animate-pulse">
+                                <Loader2 className="animate-spin text-teal-400" size={14} />
+                                <span>E-Tablo ile eşitleniyor...</span>
+                            </span>
+                        ) : (
+                            <span className="text-xs font-medium text-emerald-300 flex items-center gap-1.5 bg-forest-900 px-3 py-1.5 rounded-lg border border-emerald-500/40 shadow-sm">
+                                <CheckCircle2 className="text-emerald-400" size={14} />
+                                <span>Canlı Güncel</span>
+                            </span>
+                        )}
+                    </div>
                     <Card title="Birim Seçiniz">
-                        <div className={`relative grid grid-cols-2 md:grid-cols-4 gap-4 transition-all duration-500 ${isUnitsLoading ? 'blur-xl pointer-events-none select-none opacity-30 cursor-not-allowed' : ''}`}>
-                             <button disabled={isUnitsLoading} onClick={() => handleUnitSelection('YÖNETİM')} className={`p-6 rounded border-2 font-bold flex flex-col items-center transition-all group relative overflow-hidden ${!dashboardStatus['YÖNETİM']?.missing ? 'bg-teal-600 border-teal-400 hover:bg-teal-500 text-white' : 'bg-forest-800 border-forest-600 hover:bg-forest-700 text-white'} ${isUnitsLoading ? 'cursor-not-allowed' : ''}`}>
+                        <div className={`relative grid grid-cols-2 md:grid-cols-4 gap-4 transition-all duration-300 ${isUnitsLoading && models.length === 0 ? 'blur-md pointer-events-none opacity-40' : ''}`}>
+                             <button onClick={() => handleUnitSelection('YÖNETİM')} className={`p-6 rounded border-2 font-bold flex flex-col items-center transition-all group relative overflow-hidden ${!dashboardStatus['YÖNETİM']?.missing ? 'bg-teal-600 border-teal-400 hover:bg-teal-500 text-white' : 'bg-forest-800 border-forest-600 hover:bg-forest-700 text-white'}`}>
                                 <Users className="mb-2" /> YÖNETİM
                                 {dashboardStatus['YÖNETİM']?.missing && <span className="text-[10px] bg-red-600 px-2 py-0.5 rounded mt-2 animate-pulse w-full block">YOKLAMA GİRİLMEDİ</span>}
                             </button>
@@ -4206,7 +4232,7 @@
                                 const stat = dashboardStatus[m] || { pilotMissing: false, techMissing: false, groundMissing: false };
                                 const hasIssue = stat.pilotMissing || stat.techMissing || stat.groundMissing;
                                 return (
-                                <button key={m} disabled={isUnitsLoading} onClick={() => handleUnitSelection(m)} className={`p-6 rounded border-2 font-bold flex flex-col items-center transition-all group relative overflow-hidden ${!hasIssue ? 'bg-teal-600 border-teal-400 hover:bg-teal-500 text-white' : 'bg-forest-800 border-forest-600 hover:bg-forest-700 text-white'} ${isUnitsLoading ? 'cursor-not-allowed' : ''}`}>
+                                <button key={m} onClick={() => handleUnitSelection(m)} className={`p-6 rounded border-2 font-bold flex flex-col items-center transition-all group relative overflow-hidden ${!hasIssue ? 'bg-teal-600 border-teal-400 hover:bg-teal-500 text-white' : 'bg-forest-800 border-forest-600 hover:bg-forest-700 text-white'}`}>
                                     <ModelIcon category={inv.find(a => a.model === m)?.category} model={m} className="mb-2" /> {m}
                                     {stat.groundMissing && <span className="text-[10px] bg-red-600 px-2 py-0.5 rounded mt-2 animate-pulse w-full block">YOKLAMA GİRİLMEDİ</span>}
                                     {stat.pilotMissing && <span className="text-[10px] bg-orange-600 px-2 py-0.5 rounded mt-1 animate-pulse w-full block">PİLOT GİRİLMEDİ</span>}
@@ -4214,7 +4240,7 @@
                                 </button>
                             )})}
                         </div>
-                        {isUnitsLoading && (
+                        {isUnitsLoading && models.length === 0 && (
                             <div className="absolute inset-0 flex flex-col items-center justify-center bg-forest-950/85 rounded-lg z-20 backdrop-blur-md p-4 text-center">
                                 <Loader2 className="animate-spin text-teal-400 mb-3" size={44} />
                                 <span className="text-base sm:text-lg font-bold text-teal-300 bg-forest-900/95 px-6 py-3 rounded-xl border border-teal-500/80 shadow-2xl tracking-wide uppercase animate-pulse">
