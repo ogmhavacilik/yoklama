@@ -339,19 +339,19 @@
             }
         };
 
-        const cachedAircraft = fastCache.get('aircraft', null);
-        const cachedPersonnel = fastCache.get('personnel', null);
-        const cachedAttendance = fastCache.get('attendance', null);
+        const cachedAircraft = fastCache.get('aircraft', null) || INITIAL_AIRCRAFT;
+        const cachedPersonnel = fastCache.get('personnel', null) || INITIAL_PERSONNEL;
+        const cachedAttendance = fastCache.get('attendance', null) || [];
 
         const memoryCache = {
             aircraft: cachedAircraft,
             personnel: cachedPersonnel,
             attendance: cachedAttendance,
-            loaded: !!(cachedAircraft && cachedPersonnel && cachedAttendance),
+            loaded: true,
             preloadPromise: null
         };
 
-        const apiCall = async (action, payload = {}, timeoutMs = 90000, retries = 3) => {
+        const apiCall = async (action, payload = {}, timeoutMs = 12000, retries = 1) => {
             for (let attempt = 0; attempt <= retries; attempt++) {
                 const controller = new AbortController();
                 const timeoutId = timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : null; 
@@ -404,10 +404,10 @@
 
                 memoryCache.preloadPromise = (async () => {
                     try {
-                        // Canlı sunucu verilerini arka planda paralel çek
+                        // Canlı sunucu verilerini arka planda hızlıca çek (Hızlı zaman aşımı)
                         const [data, att] = await Promise.all([
-                            apiCall('get_init_data', {}, 90000),
-                            apiCall('get_attendance', {}, 90000)
+                            apiCall('get_init_data', {}, 12000, 1),
+                            apiCall('get_attendance', {}, 12000, 1)
                         ]);
 
                         if (data && data.aircraft) {
@@ -2849,7 +2849,178 @@
             return null;
         };
 
+        // Mobile Attendance Control Component (Ultra-fast touch targets for mobile)
+        const MobileAttendanceControl = ({ personId, state, isWeeklyMode, onChangeStatus, onChangeDetail, isWeekend, sortedCities }) => {
+            const status = state?.status;
+            const cityOptions = useMemo(() => {
+                return sortedCities || [...CITIES].sort((a, b) => a.localeCompare(b, 'tr'));
+            }, [sortedCities]);
+
+            const handleStatusClick = (newStatus) => {
+                if (isWeekend && status === newStatus) {
+                    onChangeStatus(personId, undefined);
+                } else {
+                    onChangeStatus(personId, newStatus);
+                }
+            };
+
+            return (
+                <div className="w-full space-y-2 mt-2">
+                    <div className="grid grid-cols-4 gap-1.5 text-center">
+                        <button 
+                            type="button"
+                            onClick={() => handleStatusClick(AttendanceStatus.PRESENT)} 
+                            className={`py-2 px-1 text-[11px] font-bold rounded border transition-all active:scale-95 ${status === AttendanceStatus.PRESENT ? 'bg-green-600 border-green-400 text-white shadow-md' : 'bg-forest-950 border-forest-800 text-forest-300'}`}
+                        >
+                            Mevcut
+                        </button>
+                        <button 
+                            type="button"
+                            onClick={() => handleStatusClick(AttendanceStatus.DUTY)} 
+                            className={`py-2 px-1 text-[11px] font-bold rounded border transition-all active:scale-95 ${status === AttendanceStatus.DUTY ? 'bg-blue-600 border-blue-400 text-white shadow-md' : 'bg-forest-950 border-forest-800 text-forest-300'}`}
+                        >
+                            Görev
+                        </button>
+                        <button 
+                            type="button"
+                            onClick={() => handleStatusClick(AttendanceStatus.COURSE)} 
+                            className={`py-2 px-1 text-[11px] font-bold rounded border transition-all active:scale-95 ${status === AttendanceStatus.COURSE ? 'bg-indigo-600 border-indigo-400 text-white shadow-md' : 'bg-forest-950 border-forest-800 text-forest-300'}`}
+                        >
+                            Kurs
+                        </button>
+                        <button 
+                            type="button"
+                            onClick={() => handleStatusClick(AttendanceStatus.LEAVE)} 
+                            className={`py-2 px-1 text-[11px] font-bold rounded border transition-all active:scale-95 ${status === AttendanceStatus.LEAVE ? 'bg-yellow-600 border-yellow-400 text-white shadow-md' : 'bg-forest-950 border-forest-800 text-forest-300'}`}
+                        >
+                            İzin
+                        </button>
+                        <button 
+                            type="button"
+                            onClick={() => handleStatusClick(AttendanceStatus.SICK)} 
+                            className={`py-2 px-1 text-[11px] font-bold rounded border transition-all active:scale-95 ${status === AttendanceStatus.SICK ? 'bg-red-600 border-red-400 text-white shadow-md' : 'bg-forest-950 border-forest-800 text-forest-300'}`}
+                        >
+                            Rapor
+                        </button>
+                        <button 
+                            type="button"
+                            onClick={() => handleStatusClick(AttendanceStatus.PUBLIC_HOLIDAY)} 
+                            className={`py-2 px-1 text-[11px] font-bold rounded border transition-all active:scale-95 ${status === AttendanceStatus.PUBLIC_HOLIDAY ? 'bg-orange-600 border-orange-400 text-white shadow-md' : 'bg-forest-950 border-forest-800 text-forest-300'}`}
+                        >
+                            İ.İzin
+                        </button>
+                        <button 
+                            type="button"
+                            onClick={() => handleStatusClick(AttendanceStatus.OTHER)} 
+                            className={`py-2 px-1 text-[11px] font-bold rounded border transition-all active:scale-95 ${status === AttendanceStatus.OTHER ? 'bg-purple-600 border-purple-400 text-white shadow-md' : 'bg-forest-950 border-forest-800 text-forest-300'}`}
+                        >
+                            Diğer
+                        </button>
+                        <button 
+                            type="button"
+                            onClick={() => handleStatusClick(AttendanceStatus.ABSENT)} 
+                            className={`py-2 px-1 text-[11px] font-bold rounded border transition-all active:scale-95 ${status === AttendanceStatus.ABSENT ? 'bg-red-800 border-red-600 text-white shadow-md' : 'bg-forest-950 border-forest-800 text-forest-300'}`}
+                        >
+                            Yok
+                        </button>
+                    </div>
+
+                    {status === AttendanceStatus.DUTY && (
+                        <div className="bg-forest-950 p-2 rounded border border-blue-600/40 space-y-2 mt-1">
+                            <div className="flex gap-3 text-xs text-forest-300">
+                                <label className="flex items-center gap-1 cursor-pointer">
+                                    <input type="radio" checked={state?.dutyType !== DutyType.UNPLANNED} onChange={() => onChangeDetail(personId, 'dutyType', DutyType.PLANNED)} className="accent-forest-500" /> Planlı
+                                </label>
+                                <label className="flex items-center gap-1 cursor-pointer">
+                                    <input type="radio" checked={state?.dutyType === DutyType.UNPLANNED} onChange={() => onChangeDetail(personId, 'dutyType', DutyType.UNPLANNED)} className="accent-forest-500" /> Plansız
+                                </label>
+                                {isWeeklyMode && state?.dutyType !== DutyType.UNPLANNED && (
+                                    <label className="flex items-center gap-1 cursor-pointer bg-forest-800 px-2 py-0.5 rounded ml-auto text-[10px] text-white">
+                                        <input type="checkbox" checked={!!state?.includeWeekend} onChange={(e) => onChangeDetail(personId, 'includeWeekend', e.target.checked)} className="accent-forest-500" /> H.Sonu
+                                    </label>
+                                )}
+                            </div>
+                            <select
+                                className="bg-forest-900 border border-forest-700 text-white text-xs rounded p-2 w-full outline-none"
+                                value={(!state?.dutyLocation) ? "" : ((state.dutyLocation === 'YURT DIŞI' || CITIES.includes(state.dutyLocation)) ? state.dutyLocation : 'YURT DIŞI')}
+                                onChange={(e) => onChangeDetail(personId, 'dutyLocation', e.target.value)}
+                            >
+                                <option value="" disabled>Görev Yeri Seç</option>
+                                {cityOptions.map(c => <option key={c} value={c}>{c}</option>)}
+                                <option value="YURT DIŞI">DİĞER / YURT DIŞI</option>
+                            </select>
+                            {state?.dutyLocation && (
+                                <input 
+                                    type="text" 
+                                    placeholder="Bölge adı (Opsiyonel)" 
+                                    className="bg-forest-900 border border-forest-700 text-white text-xs rounded p-2 w-full outline-none" 
+                                    value={state.dutyLocationDetail || ''} 
+                                    onChange={(e) => onChangeDetail(personId, 'dutyLocationDetail', e.target.value)} 
+                                />
+                            )}
+                        </div>
+                    )}
+
+                    {status === AttendanceStatus.LEAVE && (
+                        <div className="bg-forest-950 p-2 rounded border border-yellow-600/40 mt-1">
+                            <select 
+                                className="bg-forest-900 border border-forest-700 text-white text-xs rounded p-2 w-full outline-none" 
+                                value={state?.leaveType || LeaveType.DAILY} 
+                                onChange={(e) => onChangeDetail(personId, 'leaveType', e.target.value)}
+                            >
+                                <option value={LeaveType.DAILY}>Günlük İzin (G.İ)</option>
+                                <option value={LeaveType.OVERTIME}>Fazla Mesai İzni (F.M.İ)</option>
+                                <option value={LeaveType.HALF_OVERTIME}>Yarım Gün F.M.İ (Y.F.M.İ)</option>
+                                <option value={LeaveType.ANNUAL}>Yıllık İzin (Yİ)</option>
+                                <option value={LeaveType.EXCUSE}>Mazeret İzni (M.İ)</option>
+                                <option value={LeaveType.HALF_DAY}>Yarım Gün İzin (Y.G.İ)</option>
+                            </select>
+                        </div>
+                    )}
+
+                    {status === AttendanceStatus.COURSE && (
+                        <div className="bg-forest-950 p-2 rounded border border-indigo-600/40 mt-1">
+                            <input 
+                                type="text" 
+                                placeholder="Kurs Adı..." 
+                                className="bg-forest-900 border border-forest-700 text-white text-xs rounded p-2 w-full outline-none" 
+                                value={state?.dutyLocation || ''} 
+                                onChange={(e) => onChangeDetail(personId, 'dutyLocation', e.target.value)} 
+                            />
+                        </div>
+                    )}
+
+                    {status === AttendanceStatus.OTHER && (
+                        <div className="bg-forest-950 p-2 rounded border border-purple-600/40 mt-1">
+                            <input 
+                                type="text" 
+                                placeholder="Açıklama giriniz..." 
+                                className="bg-forest-900 border border-forest-700 text-white text-xs rounded p-2 w-full outline-none" 
+                                value={state?.note || ''} 
+                                onChange={(e) => onChangeDetail(personId, 'note', e.target.value)} 
+                            />
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
         const AttendanceView = ({ initialModel = null, initialStartDate = getTodayString(), initialEndDate = getTodayString(), initialSearchName = null, onSave: onSaveExternal }) => {
+            const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && (window.innerWidth < 768 || /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)));
+            const [selectedMobileUnit, setSelectedMobileUnit] = useState('');
+            const [showRangeReportModal, setShowRangeReportModal] = useState(false);
+            const [rangeExportStart, setRangeExportStart] = useState(initialStartDate);
+            const [rangeExportEnd, setRangeExportEnd] = useState(initialEndDate);
+
+            const sortedCities = useMemo(() => {
+                return [...CITIES].sort((a, b) => a.localeCompare(b, 'tr'));
+            }, []);
+
+            useEffect(() => {
+                const handleResize = () => setIsMobile(window.innerWidth < 768 || /iPhone|iPad|iPod|Android/i.test(navigator.userAgent));
+                window.addEventListener('resize', handleResize);
+                return () => window.removeEventListener('resize', handleResize);
+            }, []);
             const [selModel, setSelModel] = useState(initialModel);
             const [searchName, setSearchName] = useState(initialSearchName);
             const [rangeStartDate, setRangeStartDate] = useState(initialStartDate);
@@ -2995,6 +3166,17 @@
                         const statusMap = {};
                         const today = getTodayString();
                         
+                        // O(1) Instant lookup Set for today's recorded attendance
+                        const todayRecordPersonIds = new Set();
+                        if (recs && recs.length > 0) {
+                            for (let i = 0; i < recs.length; i++) {
+                                const r = recs[i];
+                                if (r.date === today && r.status && r.status !== '') {
+                                    todayRecordPersonIds.add(String(r.personId));
+                                }
+                            }
+                        }
+
                         const specificAircraftTags = uniqueModels
                             .filter(m => m !== AircraftModel.YER_DESTEK && m !== AircraftModel.TEKNIK_EKIP && m !== AircraftModel.IDARI_BIRIM)
                             .map(m => m.replace(/[^a-zA-Z0-9ğüşıöçĞÜŞİÖÇ]/g, '').toLocaleUpperCase('tr-TR'));
@@ -3003,19 +3185,16 @@
                             const mNameNormalized = m.replace(/[^a-zA-Z0-9ğüşıöçĞÜŞİÖÇ]/g, '').toLocaleUpperCase('tr-TR');
                             
                             const relevantPersonnel = finalPersonnel.filter(p => {
-                                // EXCLUDE MANAGEMENT NAMES FROM REGULAR AIRCRAFT LISTS
                                 if (YONETIM_NAMES.includes(p.fullName)) return false;
 
                                 const pStart = p.activeFrom || '2000-01-01';
                                 const pEnd = p.activeUntil || '2099-12-31';
                                 if (today < pStart || today > pEnd) return false;
 
-                                // 1. PRIORITIZE EXPLICIT UNIT ASSIGNMENT
                                 if (p.unit) {
                                     return p.unit === m;
                                 }
 
-                                // 2. FALLBACK TO TITLE/ROLE MATCHING
                                 const titleUpper = (p.title || '').toLocaleUpperCase('tr-TR');
                                 const role = p.role;
                                 const tClean = titleUpper.replace(/[^a-zA-Z0-9ğüşıöçĞÜŞİÖÇ]/g, '');
@@ -3023,7 +3202,7 @@
                                 const belongsToSpecificAircraft = specificAircraftTags.some(tag => tClean.includes(tag));
 
                                 if (m === AircraftModel.YER_DESTEK) {
-                                    if (p.fullName.includes('SERKAN KOTAN')) return true; // Force include SERKAN KOTAN
+                                    if (p.fullName.includes('SERKAN KOTAN')) return true;
                                     if (belongsToSpecificAircraft) return false; 
                                     const isTechnicalRole = titleUpper.includes('UÇAK TEKNİ') || titleUpper.includes('MÜHENDİS');
                                     if (isTechnicalRole) return false;
@@ -3032,7 +3211,7 @@
                                     const isGroundTitle = titleUpper.includes('MEMUR') || titleUpper.includes('İŞÇİ') || titleUpper.includes('ŞÖFÖR');
                                     return isGroundRole || isGroundTitle;
                                 } else if (m === AircraftModel.TEKNIK_EKIP) {
-                                    if (p.fullName.includes('SERKAN KOTAN')) return false; // Force exclude SERKAN KOTAN
+                                    if (p.fullName.includes('SERKAN KOTAN')) return false;
                                     if (belongsToSpecificAircraft) return false;
                                     return titleUpper.includes('UÇAK TEKNİ') || titleUpper.includes('MÜHENDİS');
                                 } else {
@@ -3043,9 +3222,9 @@
                             const pilots = relevantPersonnel.filter(p => p.role === Role.PILOT || (p.title && p.title.toLocaleUpperCase('tr-TR').includes('PİLOT')));
                             const techs = relevantPersonnel.filter(p => !pilots.includes(p));
 
-                            const pilotDataExists = pilots.length > 0 && pilots.some(p => (recs || []).some(r => r.date === today && r.personId === p.id));
-                            const techDataExists = techs.length > 0 && techs.some(p => (recs || []).some(r => r.date === today && r.personId === p.id));
-                            const groundDataExists = relevantPersonnel.length > 0 && relevantPersonnel.some(p => (recs || []).some(r => r.date === today && r.personId === p.id));
+                            const pilotDataExists = pilots.length > 0 && pilots.some(p => todayRecordPersonIds.has(String(p.id)));
+                            const techDataExists = techs.length > 0 && techs.some(p => todayRecordPersonIds.has(String(p.id)));
+                            const groundDataExists = relevantPersonnel.length > 0 && relevantPersonnel.some(p => todayRecordPersonIds.has(String(p.id)));
 
                             const isGroundUnit = m === AircraftModel.YER_DESTEK;
                             const isTechnicalUnit = m === AircraftModel.TEKNIK_EKIP;
@@ -3059,7 +3238,7 @@
 
                         // Check YONETIM Status
                         const yonetimMembers = finalPersonnel.filter(p => YONETIM_NAMES.includes(p.fullName));
-                        const yonetimHasData = yonetimMembers.some(p => (recs || []).some(r => r.date === today && r.personId === p.id));
+                        const yonetimHasData = yonetimMembers.some(p => todayRecordPersonIds.has(String(p.id)));
                         statusMap['YÖNETİM'] = { missing: !yonetimHasData && yonetimMembers.length > 0 };
 
                         setDashboardStatus(statusMap);
@@ -3098,9 +3277,8 @@
                 loadDashboardData();
                 setLoading(false);
                 
-                // Eğer daha önce kaydedilmiş veri varsa birimler hemen açılır, kullanıcı asla kilitlenmez
-                const hasCachedData = memoryCache.attendance !== null && memoryCache.attendance.length > 0;
-                setIsUnitsLoading(!hasCachedData);
+                // Birimler anında açılır, mobil kullanıcı asla bekletilmez
+                setIsUnitsLoading(false);
                 setIsLiveSyncing(true);
 
                 // 2. Canlı Google E-Tablo sunucu verilerini arka planda çek ve sessizce eşitle
@@ -3267,10 +3445,8 @@
 
                     targetP.sort((a, b) => (a.rank || 999) - (b.rank || 999));
 
-                    setTimeout(() => {
-                        setPeople(targetP);
-                        setLoading(false);
-                    }, 300);
+                    setPeople(targetP);
+                    setLoading(false);
                 }
             }, [selModel, searchName, allPersonnel, rangeStartDate, rangeEndDate, models]);
 
@@ -3284,28 +3460,37 @@
                 const dObj = new Date(referenceDate); 
                 const isWe = dObj.getDay() === 0 || dObj.getDay() === 6;
 
+                // Build fast O(1) map of records for personId_date
+                const recsMap = new Map();
+                if (allRecs && allRecs.length > 0) {
+                    for (let i = 0; i < allRecs.length; i++) {
+                        const x = allRecs[i];
+                        if (x && x.personId && x.date && x.status && x.status !== '') {
+                            recsMap.set(`${x.personId}_${x.date}`, x);
+                        }
+                    }
+                }
+
+                // Compute Saturday string for weekly mode
+                let satStr = null;
+                if (rangeStartDate !== rangeEndDate) {
+                    const [y, m, d] = referenceDate.split('-').map(Number);
+                    const current = new Date(y, m-1, d, 12,0,0);
+                    const dayOfWeek = current.getDay();
+                    const diffToSat = (dayOfWeek === 0) ? -1 : (6 - dayOfWeek);
+                    const satDate = new Date(current);
+                    satDate.setDate(current.getDate() + diffToSat);
+                    satStr = normalizeDate(satDate);
+                }
+
                 people.forEach(p => {
-                    const r = allRecs.find(x => x.personId === p.id && x.date === referenceDate && x.status && x.status !== '');
+                    const r = recsMap.get(`${p.id}_${referenceDate}`);
                     
-                    // Check for weekend inclusion history (look at Saturday record of this specific week)
                     let hasWeekendRecord = false;
-                    if (rangeStartDate !== rangeEndDate) { // Weekly view
-                         // Find Saturday of this specific week
-                         const [y, m, d] = referenceDate.split('-').map(Number);
-                         const current = new Date(y, m-1, d, 12,0,0);
-                         const dayOfWeek = current.getDay();
-                         const diffToSat = (dayOfWeek === 0) ? -1 : (6 - dayOfWeek); // Days until Saturday
-                         const satDate = new Date(current);
-                         satDate.setDate(current.getDate() + diffToSat);
-                         const satStr = normalizeDate(satDate);
-                         
-                         const satRec = allRecs.find(x => x.personId === p.id && x.date === satStr && x.status && x.status !== '');
-                         // If Saturday has a record that matches criteria
+                    if (satStr) {
+                         const satRec = recsMap.get(`${p.id}_${satStr}`);
                          if (satRec) {
-                             if (satRec.status === AttendanceStatus.DUTY) {
-                                 hasWeekendRecord = true;
-                             }
-                             if (satRec.status === AttendanceStatus.LEAVE && satRec.leaveType === LeaveType.OVERTIME) {
+                             if (satRec.status === AttendanceStatus.DUTY || (satRec.status === AttendanceStatus.LEAVE && satRec.leaveType === LeaveType.OVERTIME)) {
                                  hasWeekendRecord = true;
                              }
                          }
@@ -4198,13 +4383,469 @@
             };
 
              if (loading) return (
-                <div className="fixed inset-0 bg-black/80 z-50 flex flex-col items-center justify-center">
-                    <div className="w-64 h-64 mb-4 rounded-full border-8 border-forest-400 overflow-hidden shadow-[0_0_40px_rgba(0,0,0,0.6)]">
-                        <img src="https://media4.giphy.com/media/v1.Y2lkPTc5MGI3NjExNW9uenhqZXdxbGd6YWNxc2UwempmOXNyaG15NGtuZTJmb3EyaTNqZCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9cw/1rrxPs1nb3IjwmbiXw/giphy.gif" alt="Loading..." className="w-full h-full object-cover" />
-                    </div>
-                    <div className="text-white text-xl font-bold animate-pulse">Bekleyiniz</div>
+                <div className="fixed inset-0 bg-forest-950 z-50 flex flex-col items-center justify-center p-4">
+                    {!isMobile && (
+                        <div className="w-64 h-64 mb-4 rounded-full border-8 border-forest-400 overflow-hidden shadow-[0_0_40px_rgba(0,0,0,0.6)]">
+                            <img src="https://media4.giphy.com/media/v1.Y2lkPTc5MGI3NjExNW9uenhqZXdxbGd6YWNxc2UwempmOXNyaG15NGtuZTJmb3EyaTNqZCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9cw/1rrxPs1nb3IjwmbiXw/giphy.gif" alt="Loading..." className="w-full h-full object-cover" />
+                        </div>
+                    )}
+                    <Loader2 className="animate-spin text-teal-400 mb-2" size={32} />
+                    <div className="text-white text-lg font-bold animate-pulse">Veriler Hazırlanıyor...</div>
                 </div>
             );
+
+            // MOBILE DASHBOARD (Aşağı Açılır Liste Kutucuğu + Yoklama Türüne Göre Anında Liste)
+            if (isMobile && !selModel) {
+                const selectedDateStr = dates.start || getTodayString();
+                const unitOrder = ["YÖNETİM", "BELL-429", "C-650", "B-360", "T-70", "AT-802", "TEKNİK EKİP", "YER DESTEK"];
+                
+                const getPUnit = (p) => {
+                    if (YONETIM_NAMES.includes(p.fullName)) return "YÖNETİM";
+                    if (p.unit && unitOrder.includes(p.unit)) return p.unit;
+                    const titleUpper = (p.title || '').toLocaleUpperCase('tr-TR');
+                    if (titleUpper.includes('BELL')) return "BELL-429";
+                    if (titleUpper.includes('C-650')) return "C-650";
+                    if (titleUpper.includes('B-360')) return "B-360";
+                    if (titleUpper.includes('T-70')) return "T-70";
+                    if (titleUpper.includes('AT-802')) return "AT-802";
+                    if (titleUpper.includes('TEKNİ') || titleUpper.includes('UÇAK')) return "TEKNİK EKİP";
+                    if (titleUpper.includes('MEMUR') || titleUpper.includes('İŞÇİ') || titleUpper.includes('MÜHENDİS') || titleUpper.includes('ŞÖFÖR') || [Role.DRIVER, Role.CLEANING, Role.KITCHEN, Role.TEA_SERVICE, Role.OTHER].includes(p.role)) return "YER DESTEK";
+                    return "İDARİ";
+                };
+
+                const mobileFilteredPersonnel = allPersonnel.filter(p => {
+                    const isSeparated = (p.activeUntil && selectedDateStr > p.activeUntil) || (p.activeFrom && selectedDateStr < p.activeFrom);
+                    if (isSeparated) return false;
+
+                    if (selectedMobileUnit) {
+                        return getPUnit(p) === selectedMobileUnit;
+                    }
+                    return false;
+                });
+
+                const getResolvedStatus = (p) => {
+                    const r = allRecs.find(a => a.personId === p.id && a.date === selectedDateStr && a.status && a.status !== '');
+                    if (r) return r;
+
+                    const dObj = new Date(selectedDateStr + 'T12:00:00');
+                    const isWe = dObj.getDay() === 0 || dObj.getDay() === 6;
+                    if (isWe) return { status: undefined };
+
+                    const hist = allRecs
+                        .filter(x => x.personId === p.id && x.date < selectedDateStr && x.status && x.status !== '')
+                        .sort((a, b) => b.date.localeCompare(a.date))[0];
+
+                    if (hist && [AttendanceStatus.PRESENT, AttendanceStatus.DUTY].includes(hist.status)) {
+                        return { ...hist, leaveType: hist.leaveType || LeaveType.DAILY, dutyType: hist.dutyType || DutyType.PLANNED };
+                    }
+                    return { status: AttendanceStatus.PRESENT };
+                };
+
+                const groupedData = {
+                    MEVCUT: [],
+                    GOREV: [],
+                    KURS: [],
+                    IZIN: [],
+                    RAPOR: [],
+                    DIGER: []
+                };
+
+                if (selectedMobileUnit) {
+                    mobileFilteredPersonnel.forEach(p => {
+                        const res = getResolvedStatus(p);
+                        const st = res.status;
+                        const pObj = { person: p, record: res };
+
+                        if (st === AttendanceStatus.PRESENT) {
+                            groupedData.MEVCUT.push(pObj);
+                        } else if (st === AttendanceStatus.DUTY) {
+                            groupedData.GOREV.push(pObj);
+                        } else if (st === AttendanceStatus.COURSE) {
+                            groupedData.KURS.push(pObj);
+                        } else if (st === AttendanceStatus.LEAVE) {
+                            groupedData.IZIN.push(pObj);
+                        } else if (st === AttendanceStatus.SICK) {
+                            groupedData.RAPOR.push(pObj);
+                        } else {
+                            groupedData.DIGER.push(pObj);
+                        }
+                    });
+                }
+
+                return (
+                    <div className="min-h-screen bg-forest-950 text-white p-3 space-y-3 pb-24">
+                        <div className="flex items-center justify-between border-b border-forest-800 pb-2 pt-1">
+                            <div>
+                                <h1 className="text-base font-bold text-teal-300 tracking-tight">BAKIM ŞUBE YOKLAMA</h1>
+                                <p className="text-[10px] text-forest-400">Mobil Hızlı Veri Görünümü</p>
+                            </div>
+                            {isLiveSyncing ? (
+                                <span className="text-[10px] bg-forest-900 text-teal-300 px-2 py-1 rounded border border-teal-500/40 flex items-center gap-1">
+                                    <Loader2 className="animate-spin" size={10} /> Eşitleniyor
+                                </span>
+                            ) : (
+                                <span className="text-[10px] bg-forest-900 text-emerald-300 px-2 py-1 rounded border border-emerald-500/40 flex items-center gap-1">
+                                    <CheckCircle2 size={10} /> Canlı
+                                </span>
+                            )}
+                        </div>
+
+                        <div className="bg-forest-900 p-2.5 rounded-xl border border-forest-800 space-y-2.5">
+                            <div className="flex items-center justify-between gap-2">
+                                <span className="text-xs text-forest-300 font-bold">Tarih:</span>
+                                <input 
+                                    type="date" 
+                                    value={dates.start} 
+                                    onChange={e => setDates({ start: e.target.value, end: e.target.value })} 
+                                    className="bg-forest-950 text-white border border-forest-700 rounded px-2 py-1 text-xs outline-none"
+                                />
+                            </div>
+
+                            <div>
+                                <label className="text-[10px] font-bold text-forest-400 uppercase tracking-wider block mb-1">
+                                    Birim Seçimi (Aşağı Açılır Liste)
+                                </label>
+                                <div className="flex items-center gap-2">
+                                    <select 
+                                        value={selectedMobileUnit} 
+                                        onChange={e => setSelectedMobileUnit(e.target.value)}
+                                        className="flex-1 bg-forest-950 border border-teal-500/60 text-teal-300 text-xs font-extrabold rounded-lg p-2.5 outline-none focus:ring-2 focus:ring-teal-400"
+                                    >
+                                        <option value="">-- LÜTFEN BİRİM SEÇİNİZ --</option>
+                                        <option value="YÖNETİM">YÖNETİM</option>
+                                        <option value="BELL-429">🚁 BELL-429</option>
+                                        <option value="C-650">🛩️ C-650</option>
+                                        <option value="B-360">🛩️ B-360</option>
+                                        <option value="T-70">🚁 T-70</option>
+                                        <option value="AT-802">🛩️ AT-802</option>
+                                        <option value="TEKNİK EKİP">🔧 TEKNİK EKİP</option>
+                                        <option value="YER DESTEK">🚛 YER DESTEK</option>
+                                    </select>
+
+                                    {selectedMobileUnit && (
+                                        <button 
+                                            onClick={() => handleUnitSelection(selectedMobileUnit)}
+                                            className="bg-teal-600 active:bg-teal-700 text-white text-xs font-bold px-3 py-2.5 rounded-lg border border-teal-400 whitespace-nowrap shadow-md flex items-center gap-1"
+                                        >
+                                            ✏️ Yoklama Gir
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+
+                        {!selectedMobileUnit ? (
+                            <div className="bg-forest-900/80 border border-forest-800 rounded-xl p-6 text-center text-forest-300 text-xs space-y-2 my-4 shadow-md">
+                                <div className="text-3xl">📋</div>
+                                <div className="font-bold text-white text-sm">Lütfen Birim Seçiniz</div>
+                                <p className="text-forest-400 text-[11px]">
+                                    Yoklama durumunu görüntülemek ve veri girmek için lütfen yukarıdaki açılır menüden bir birim seçiniz.
+                                </p>
+                            </div>
+                        ) : (
+                            <>
+                                <div className="grid grid-cols-3 gap-1.5 text-center text-[10px] font-bold">
+                                    <div className="bg-green-950/80 border border-green-700/60 p-1.5 rounded-lg text-green-300">
+                                        MEVCUT: <span className="text-xs text-white ml-0.5">{groupedData.MEVCUT.length}</span>
+                                    </div>
+                                    <div className="bg-blue-950/80 border border-blue-700/60 p-1.5 rounded-lg text-blue-300">
+                                        GÖREV: <span className="text-xs text-white ml-0.5">{groupedData.GOREV.length}</span>
+                                    </div>
+                                    <div className="bg-yellow-950/80 border border-yellow-700/60 p-1.5 rounded-lg text-yellow-300">
+                                        İZİN/FMİ: <span className="text-xs text-white ml-0.5">{groupedData.IZIN.length}</span>
+                                    </div>
+                                </div>
+
+                                <div className="space-y-3 pt-1">
+                                    {groupedData.GOREV.length > 0 && (
+                                        <div className="bg-forest-900/90 border border-blue-600/50 rounded-xl p-2.5 space-y-2 shadow-lg">
+                                            <div className="flex items-center justify-between border-b border-blue-500/30 pb-1.5">
+                                                <span className="text-xs font-black text-blue-400 flex items-center gap-1.5">
+                                                    ✈️ GÖREVDE OLANLAR
+                                                </span>
+                                                <span className="bg-blue-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+                                                    {groupedData.GOREV.length} Kişi
+                                                </span>
+                                            </div>
+                                            <div className="space-y-1.5">
+                                                {groupedData.GOREV.map(({ person, record }) => (
+                                                    <div key={person.id} className="bg-forest-950/70 p-2 rounded-lg border border-forest-800 flex items-center justify-between text-xs">
+                                                        <div>
+                                                            <div className="font-bold text-white">{person.fullName}</div>
+                                                            <div className="text-[10px] text-forest-400">{getDisplayTitle(person.title, person.role)}</div>
+                                                        </div>
+                                                        <div className="text-right">
+                                                            <div className="text-[11px] font-bold text-blue-300">{record.dutyLocation || 'GÖREVDE'}</div>
+                                                            {record.dutyLocationDetail && (
+                                                                <div className="text-[9px] text-forest-400">{record.dutyLocationDetail}</div>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {groupedData.IZIN.length > 0 && (
+                                        <div className="bg-forest-900/90 border border-yellow-600/50 rounded-xl p-2.5 space-y-2 shadow-lg">
+                                            <div className="flex items-center justify-between border-b border-yellow-500/30 pb-1.5">
+                                                <span className="text-xs font-black text-yellow-400 flex items-center gap-1.5">
+                                                    🌴 İZİNLİ / FMİ
+                                                </span>
+                                                <span className="bg-yellow-600 text-black text-[10px] font-bold px-2 py-0.5 rounded-full">
+                                                    {groupedData.IZIN.length} Kişi
+                                                </span>
+                                            </div>
+                                            <div className="space-y-1.5">
+                                                {groupedData.IZIN.map(({ person, record }) => (
+                                                    <div key={person.id} className="bg-forest-950/70 p-2 rounded-lg border border-forest-800 flex items-center justify-between text-xs">
+                                                        <div>
+                                                            <div className="font-bold text-white">{person.fullName}</div>
+                                                            <div className="text-[10px] text-forest-400">{getDisplayTitle(person.title, person.role)}</div>
+                                                        </div>
+                                                        <div className="text-[11px] font-bold text-yellow-300">
+                                                            {record.leaveType === LeaveType.OVERTIME ? 'FAZLA MESAİ İZNİ (F.M.İ)' : (record.leaveType || 'İZİNLİ')}
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {groupedData.KURS.length > 0 && (
+                                        <div className="bg-forest-900/90 border border-indigo-600/50 rounded-xl p-2.5 space-y-2 shadow-lg">
+                                            <div className="flex items-center justify-between border-b border-indigo-500/30 pb-1.5">
+                                                <span className="text-xs font-black text-indigo-400 flex items-center gap-1.5">
+                                                    🎓 KURSTA OLANLAR
+                                                </span>
+                                                <span className="bg-indigo-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+                                                    {groupedData.KURS.length} Kişi
+                                                </span>
+                                            </div>
+                                            <div className="space-y-1.5">
+                                                {groupedData.KURS.map(({ person, record }) => (
+                                                    <div key={person.id} className="bg-forest-950/70 p-2 rounded-lg border border-forest-800 flex items-center justify-between text-xs">
+                                                        <div>
+                                                            <div className="font-bold text-white">{person.fullName}</div>
+                                                            <div className="text-[10px] text-forest-400">{getDisplayTitle(person.title, person.role)}</div>
+                                                        </div>
+                                                        <div className="text-[11px] font-bold text-indigo-300">
+                                                            {record.dutyLocation || 'KURSTA'}
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {groupedData.RAPOR.length > 0 && (
+                                        <div className="bg-forest-900/90 border border-red-600/50 rounded-xl p-2.5 space-y-2 shadow-lg">
+                                            <div className="flex items-center justify-between border-b border-red-500/30 pb-1.5">
+                                                <span className="text-xs font-black text-red-400 flex items-center gap-1.5">
+                                                    🏥 RAPORLU
+                                                </span>
+                                                <span className="bg-red-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+                                                    {groupedData.RAPOR.length} Kişi
+                                                </span>
+                                            </div>
+                                            <div className="space-y-1.5">
+                                                {groupedData.RAPOR.map(({ person }) => (
+                                                    <div key={person.id} className="bg-forest-950/70 p-2 rounded-lg border border-forest-800 flex items-center justify-between text-xs">
+                                                        <div>
+                                                            <div className="font-bold text-white">{person.fullName}</div>
+                                                            <div className="text-[10px] text-forest-400">{getDisplayTitle(person.title, person.role)}</div>
+                                                        </div>
+                                                        <div className="text-[11px] font-bold text-red-400">RAPORLU</div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    <div className="bg-forest-900/90 border border-green-600/50 rounded-xl p-2.5 space-y-2 shadow-lg">
+                                        <div className="flex items-center justify-between border-b border-green-500/30 pb-1.5">
+                                            <span className="text-xs font-black text-green-400 flex items-center gap-1.5">
+                                                ✅ MEVCUT (İŞ BAŞINDA)
+                                            </span>
+                                            <span className="bg-green-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+                                                {groupedData.MEVCUT.length} Kişi
+                                            </span>
+                                        </div>
+                                        {groupedData.MEVCUT.length === 0 ? (
+                                            <p className="text-[11px] text-forest-400 italic text-center py-2">Mevcut kaydı bulunamadı.</p>
+                                        ) : (
+                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                                                {groupedData.MEVCUT.map(({ person }) => (
+                                                    <div key={person.id} className="bg-forest-950/70 p-2 rounded-lg border border-forest-800/80 flex items-center justify-between text-xs">
+                                                        <div>
+                                                            <div className="font-bold text-white">{person.fullName}</div>
+                                                            <div className="text-[10px] text-forest-400">{getDisplayTitle(person.title, person.role)}</div>
+                                                        </div>
+                                                        <span className="text-[10px] font-bold bg-green-950 text-green-300 border border-green-600/50 px-2 py-0.5 rounded">MEVCUT</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {groupedData.DIGER.length > 0 && (
+                                        <div className="bg-forest-900/90 border border-purple-600/50 rounded-xl p-2.5 space-y-2 shadow-lg">
+                                            <div className="flex items-center justify-between border-b border-purple-500/30 pb-1.5">
+                                                <span className="text-xs font-black text-purple-400 flex items-center gap-1.5">
+                                                    📌 BEKLEME
+                                                </span>
+                                                <span className="bg-purple-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+                                                    {groupedData.DIGER.length} Kişi
+                                                </span>
+                                            </div>
+                                            <div className="space-y-1.5">
+                                                {groupedData.DIGER.map(({ person, record }) => {
+                                                    const hasNote = record.note && record.note.trim() !== '';
+                                                    const isBekleme = !hasNote || record.note.toLocaleUpperCase('tr-TR').includes('BEKLEME');
+                                                    const displayExplanation = hasNote ? record.note : 'BEKLEME';
+
+                                                    return (
+                                                        <div key={person.id} className="bg-forest-950/70 p-2 rounded-lg border border-forest-800 flex items-center justify-between text-xs">
+                                                            <div>
+                                                                <div className="font-bold text-white">{person.fullName}</div>
+                                                                <div className="text-[10px] text-forest-400">{getDisplayTitle(person.title, person.role)}</div>
+                                                            </div>
+                                                            <div className="text-right">
+                                                                <div className="text-[11px] font-bold text-purple-300">
+                                                                    {displayExplanation}
+                                                                </div>
+                                                                {isBekleme && (
+                                                                    <div className="text-[9px] text-forest-400">BEKLEME NÖBETİ</div>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            </>
+                        )}
+
+                        <div className="grid grid-cols-3 gap-1.5 pt-2">
+                            <button 
+                                onClick={() => setReportModalType('MESAI')} 
+                                className="bg-orange-600 active:bg-orange-700 text-white font-bold py-2 px-1 rounded-lg text-[11px] text-center border border-orange-400 shadow-md"
+                            >
+                                MESAİ (GÜNLÜK)
+                            </button>
+                            <button 
+                                onClick={() => setReportModalType('FMİ')} 
+                                className="bg-orange-600 active:bg-orange-700 text-white font-bold py-2 px-1 rounded-lg text-[11px] text-center border border-orange-400 shadow-md"
+                            >
+                                FMİ (GÜNLÜK)
+                            </button>
+                            <button 
+                                onClick={() => setReportModalType('GÖREV')} 
+                                className="bg-orange-600 active:bg-orange-700 text-white font-bold py-2 px-1 rounded-lg text-[11px] text-center border border-orange-400 shadow-md"
+                            >
+                                GÖREV (GÜNLÜK)
+                            </button>
+                        </div>
+
+                        <div className="bg-forest-900 p-2.5 rounded-xl border border-forest-800 space-y-2">
+                            <span className="text-xs font-bold text-forest-300 block">Excel Rapor İndir</span>
+                            <div className="flex gap-2">
+                                <button onClick={() => exportExcel(true)} className="flex-1 bg-blue-600 active:bg-blue-700 text-white text-xs font-bold py-2 rounded-lg shadow">
+                                    Bugünkü Rapor
+                                </button>
+                                <button 
+                                    onClick={() => {
+                                        setRangeExportStart(dates.start || getTodayString());
+                                        setRangeExportEnd(dates.end || getTodayString());
+                                        setShowRangeReportModal(true);
+                                    }} 
+                                    className="flex-1 bg-emerald-600 active:bg-emerald-700 text-white text-xs font-bold py-2 rounded-lg shadow"
+                                >
+                                    Aralıklı Rapor
+                                </button>
+                            </div>
+                        </div>
+
+                        {showRangeReportModal && (
+                            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                                <div className="bg-forest-900 border border-emerald-500/60 rounded-xl max-w-sm w-full p-4 space-y-4 shadow-2xl">
+                                    <div className="flex items-center justify-between border-b border-forest-800 pb-2">
+                                        <h3 className="font-bold text-emerald-300 text-sm flex items-center gap-2">
+                                            📊 Aralıklı Excel Raporu
+                                        </h3>
+                                        <button 
+                                            onClick={() => setShowRangeReportModal(false)}
+                                            className="text-forest-400 hover:text-white p-1"
+                                        >
+                                            <X size={18} />
+                                        </button>
+                                    </div>
+                                    
+                                    <p className="text-xs text-forest-300">
+                                        Lütfen raporlamak istediğiniz başlangıç ve bitiş tarihlerini seçiniz:
+                                    </p>
+
+                                    <div className="space-y-3">
+                                        <div>
+                                            <label className="text-[11px] text-forest-400 font-bold block mb-1">Başlangıç Tarihi:</label>
+                                            <input 
+                                                type="date" 
+                                                value={rangeExportStart}
+                                                onChange={e => setRangeExportStart(e.target.value)}
+                                                className="w-full bg-forest-950 border border-forest-700 rounded-lg p-2 text-xs text-white outline-none focus:border-emerald-500"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="text-[11px] text-forest-400 font-bold block mb-1">Bitiş Tarihi:</label>
+                                            <input 
+                                                type="date" 
+                                                value={rangeExportEnd}
+                                                onChange={e => setRangeExportEnd(e.target.value)}
+                                                className="w-full bg-forest-950 border border-forest-700 rounded-lg p-2 text-xs text-white outline-none focus:border-emerald-500"
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <div className="flex gap-2 pt-2">
+                                        <button 
+                                            onClick={() => setShowRangeReportModal(false)}
+                                            className="flex-1 bg-forest-800 hover:bg-forest-700 text-white text-xs font-bold py-2.5 rounded-lg"
+                                        >
+                                            İptal
+                                        </button>
+                                        <button 
+                                            onClick={() => {
+                                                setDates({ start: rangeExportStart, end: rangeExportEnd });
+                                                setShowRangeReportModal(false);
+                                                setTimeout(() => {
+                                                    exportExcel(false);
+                                                }, 100);
+                                            }}
+                                            className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold py-2.5 rounded-lg border border-emerald-400 shadow-md flex items-center justify-center gap-1.5"
+                                        >
+                                            <Download size={14} /> Excel İndir
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {reportModalType && (
+                            <ReportDialog 
+                                type={reportModalType} 
+                                onClose={() => setReportModalType(null)} 
+                                personnel={allPersonnel} 
+                                attendance={allRecs} 
+                                reportUnit={reportUnit}
+                                reportSearch={reportSearch}
+                                selectedDate={dates.start}
+                            />
+                        )}
+                    </div>
+                );
+            }
 
             if (!selModel) return (
                 <div className="container mx-auto p-4 max-w-5xl space-y-8 animate-fade-in relative">
@@ -4316,6 +4957,108 @@
 
             const pilots = people.filter(p => p.role === Role.PILOT || (p.title && p.title.toLocaleUpperCase('tr-TR').includes('PİLOT')));
             const others = people.filter(p => !pilots.includes(p));
+            const allPersonnelList = [...pilots, ...others];
+
+            // MOBILE PERSONNEL ATTENDANCE VIEW
+            if (isMobile) {
+                return (
+                    <div className="min-h-screen bg-forest-950 text-white p-2.5 pb-24 space-y-3">
+                        <div className="sticky top-0 bg-forest-950/95 pt-1 pb-2 border-b border-forest-800 z-30 flex items-center justify-between gap-2">
+                            <button 
+                                onClick={handleBackToDashboard} 
+                                className="bg-forest-800 active:bg-forest-700 text-white px-2.5 py-1.5 rounded text-xs font-bold flex items-center gap-1 border border-forest-700"
+                            >
+                                <ArrowUp className="rotate-[-90deg]" size={14} /> Geri
+                            </button>
+                            <div className="flex items-center gap-1">
+                                <ModelIcon model={selModel} category={inv.find(a => a.model === selModel)?.category} size={16} />
+                                <span className="font-extrabold text-sm text-teal-300 truncate max-w-[130px]">{selModel}</span>
+                            </div>
+                            <input 
+                                type="date" 
+                                value={rangeStartDate} 
+                                onChange={e => {
+                                    if (hasUnsavedChanges) save(true);
+                                    setRangeStartDate(e.target.value);
+                                    setRangeEndDate(e.target.value);
+                                }}
+                                className="bg-forest-900 border border-forest-700 text-white text-xs rounded px-1.5 py-1 outline-none w-28"
+                            />
+                        </div>
+
+                        <div className="relative">
+                            <Search size={14} className="absolute left-2.5 top-2.5 text-forest-400" />
+                            <input 
+                                type="text" 
+                                placeholder="Personel Ara..." 
+                                className="w-full bg-forest-900 border border-forest-800 rounded-lg py-1.5 pl-8 pr-8 text-xs text-white outline-none focus:border-teal-500" 
+                                value={searchName || ''} 
+                                onChange={e => setSearchName(e.target.value)} 
+                            />
+                            {searchName && (
+                                <button onClick={() => setSearchName(null)} className="absolute right-2.5 top-2.5 text-forest-400">
+                                    <X size={14} />
+                                </button>
+                            )}
+                        </div>
+
+                        <div className="space-y-2">
+                            {allPersonnelList.map((p, i) => {
+                                const s = att[p.id] || {};
+                                return (
+                                    <div key={p.id} className="bg-forest-900/90 border border-forest-800 p-2.5 rounded-lg">
+                                        <div className="flex items-center justify-between border-b border-forest-800/80 pb-1.5 mb-1.5">
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-[11px] font-bold text-forest-400 w-4">{i + 1}.</span>
+                                                <div>
+                                                    <div className="font-bold text-white text-sm leading-tight">{p.fullName}</div>
+                                                    <div className="text-[10px] text-forest-300">{getDisplayTitle(p.title, p.role)}</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <MobileAttendanceControl 
+                                            personId={p.id} 
+                                            state={s} 
+                                            isWeeklyMode={rangeStartDate !== rangeEndDate} 
+                                            onChangeStatus={handleStatusChangeWithAuth} 
+                                            onChangeDetail={handleDetailChangeWithAuth} 
+                                            isWeekend={(() => {
+                                                const d = new Date(rangeStartDate + 'T12:00:00');
+                                                return d.getDay() === 0 || d.getDay() === 6;
+                                            })()}
+                                            sortedCities={sortedCities}
+                                        />
+                                    </div>
+                                );
+                            })}
+                        </div>
+
+                        <div className="fixed bottom-0 left-0 right-0 p-2.5 bg-forest-950 border-t border-forest-800 z-50 flex items-center justify-center">
+                            <button 
+                                onClick={() => save(false)} 
+                                disabled={isSaving} 
+                                className={`w-full py-3 rounded-lg font-extrabold text-sm flex items-center justify-center gap-2 transition-all active:scale-95 shadow-lg ${
+                                    hasUnsavedChanges 
+                                        ? 'bg-amber-500 text-black border-2 border-amber-300 animate-pulse' 
+                                        : 'bg-emerald-600 text-white'
+                                }`}
+                            >
+                                {isSaving ? (
+                                    <>
+                                        <Loader2 className="animate-spin" size={16} />
+                                        <span>Kaydediliyor...</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <Save size={16} />
+                                        <span>KAYDET {hasUnsavedChanges ? '(DEĞİŞİKLİK VAR)' : '✓'}</span>
+                                    </>
+                                )}
+                            </button>
+                        </div>
+                    </div>
+                );
+            }
 
             return (
                 <div className="container mx-auto p-4 max-w-6xl animate-fade-in relative">
@@ -4573,17 +5316,39 @@
         const App = () => {
             const [view, setView] = useState('attendance');
             const [isAuthenticated, setIsAuthenticated] = useState(false);
-            const [curtainOpen, setCurtainOpen] = useState(false);
-            const [curtainHidden, setCurtainHidden] = useState(false);
-            useEffect(() => { const timer = setTimeout(() => { setCurtainOpen(true); setTimeout(() => setCurtainHidden(true), 700); }, 1000); return () => clearTimeout(timer); }, []);
+            const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && (window.innerWidth < 768 || /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)));
+            const [curtainOpen, setCurtainOpen] = useState(isMobile);
+            const [curtainHidden, setCurtainHidden] = useState(isMobile);
+
+            useEffect(() => {
+                const checkMobile = () => setIsMobile(window.innerWidth < 768 || /iPhone|iPad|iPod|Android/i.test(navigator.userAgent));
+                window.addEventListener('resize', checkMobile);
+                return () => window.removeEventListener('resize', checkMobile);
+            }, []);
+
+            useEffect(() => {
+                if (isMobile) {
+                    setCurtainOpen(true);
+                    setCurtainHidden(true);
+                    return;
+                }
+                const timer = setTimeout(() => { 
+                    setCurtainOpen(true); 
+                    setTimeout(() => setCurtainHidden(true), 700); 
+                }, 1000); 
+                return () => clearTimeout(timer); 
+            }, [isMobile]);
+
             const handleLoginSuccess = () => { setIsAuthenticated(true); setView('admin'); };
             const handleLogout = () => { setIsAuthenticated(false); setView('attendance'); };
             return (
                 <div className="min-h-screen pb-10">
-                    <div id="curtain" className={`fixed top-0 left-0 w-full h-full bg-forest-800 z-[9999] flex flex-col items-center justify-center transition-transform duration-700 ease-in-out ${curtainOpen ? '-translate-y-full' : 'translate-y-0'} ${curtainHidden ? 'hidden' : ''}`}>
-                        <div className="w-96 h-96 rounded-full overflow-hidden border-8 border-forest-400 shadow-[0_0_40px_rgba(0,0,0,0.6)] mb-8"><img src="https://media4.giphy.com/media/v1.Y2lkPTc5MGI3NjExNW9uenhqZXdxbGd6YWNxc2UwempmOXNyaG15NGtuZTJmb3EyaTNqZCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9cw/1rrxPs1nb3IjwmbiXw/giphy.gif" className="w-full h-full object-cover" alt="Loading" /></div>
-                        <h1 className="text-5xl md:text-6xl font-bold text-white tracking-wider text-center px-4">BAKIM ŞUBE YOKLAMA</h1>
-                    </div>
+                    {!isMobile && (
+                        <div id="curtain" className={`fixed top-0 left-0 w-full h-full bg-forest-800 z-[9999] flex flex-col items-center justify-center transition-transform duration-700 ease-in-out ${curtainOpen ? '-translate-y-full' : 'translate-y-0'} ${curtainHidden ? 'hidden' : ''}`}>
+                            <div className="w-96 h-96 rounded-full overflow-hidden border-8 border-forest-400 shadow-[0_0_40px_rgba(0,0,0,0.6)] mb-8"><img src="https://media4.giphy.com/media/v1.Y2lkPTc5MGI3NjExNW9uenhqZXdxbGd6YWNxc2UwempmOXNyaG15NGtuZTJmb3EyaTNqZCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9cw/1rrxPs1nb3IjwmbiXw/giphy.gif" className="w-full h-full object-cover" alt="Loading" /></div>
+                            <h1 className="text-5xl md:text-6xl font-bold text-white tracking-wider text-center px-4">BAKIM ŞUBE YOKLAMA</h1>
+                        </div>
+                    )}
                     {view === 'attendance' && (<div className="relative"><AttendanceView /><div className="fixed top-4 right-4 z-50"><button onClick={() => setView('login')} className="bg-forest-600 hover:bg-forest-500 text-white px-3 py-1.5 text-xs rounded-full border border-forest-500 shadow-md flex items-center gap-1.5 transition-all font-bold tracking-wide"><Settings size={14} /><span>Yönetici Paneli</span></button></div></div>)}
                     {view === 'login' && (<div className="container mx-auto p-4 animate-fade-in"><button onClick={() => setView('attendance')} className="mb-4 text-forest-400 hover:text-white flex items-center gap-2"><ArrowUp className="rotate-[-90deg]" size={16} /> Geri Dön</button><Login onLogin={handleLoginSuccess} /></div>)}
                     {view === 'admin' && (isAuthenticated ? (<AdminPanel onLogout={handleLogout} />) : (<Login onLogin={handleLoginSuccess} />))}
