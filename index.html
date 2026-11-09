@@ -142,7 +142,7 @@
 
         const YONETIM_NAMES = ["MEHMET SEFA YÜCEDAĞ", "TEZCAN GÜZER", "ALPER ÖZMETİN" ,"MURAT AKMEŞE"];
 
-        const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzkIYFs3JvIEQkT3Kh-XdLXtKMdsWBaXg6XY91dk_5i16_bCJf6C9zkycklXubUTir5/exec"; 
+        const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycby_lOwSjFtIXIwT0e92FYohz93DPleuZFpPjaM9Lz-H9rbjOLWP65FwkRugETjiLvzK/exec"; 
 
         const CITIES = ['Adana', 'Adıyaman', 'Afyonkarahisar', 'Ağrı', 'Amasya', 'Ankara', 'Antalya', 'Artvin', 'Aydın', 'Balıkesir', 'Bilecik', 'Bingöl', 'Bitlis', 'Bolu', 'Burdur', 'Bursa', 'Çanakkale', 'Çankırı', 'Çorum', 'Denizli', 'Diyarbakır', 'Edirne', 'Elazığ', 'Erzincan', 'Erzurum', 'Eskişehir', 'Gaziantep', 'Giresun', 'Gümüşhane', 'Hakkari', 'Hatay', 'Isparta', 'Mersin', 'İstanbul', 'İzmir', 'Kars', 'Kastamonu', 'Kayseri', 'Kırklareli', 'Kırşehir', 'Kocaeli', 'Konya', 'Kütahya', 'Malatya', 'Manisa', 'Kahramanmaraş', 'Mardin', 'Muğla', 'Muş', 'Nevşehir', 'Niğde', 'Ordu', 'Rize', 'Sakarya', 'Samsun', 'Siirt', 'Siirt', 'Siirt', 'Sinop', 'Sivas', 'Tekirdağ', 'Tokat', 'Trabzon', 'Tunceli', 'Şanlıurfa', 'Uşak', 'Van', 'Yozgat', 'Zonguldak', 'Aksaray', 'Bayburt', 'Karaman', 'Kırıkkale', 'Batman', 'Şırnak', 'Bartın', 'Ardahan', 'Iğdır', 'Yalova', 'Karabük', 'Kilis', 'Osmaniye', 'Düzce', 'YURT DIŞI'];
 
@@ -462,7 +462,8 @@
                                 id: String(r.id),
                                 personId: String(r.personId),
                                 date: normalizeDate(r.date),
-                                status: r.status === 'İzinli' ? 'İzin' : r.status
+                                status: r.status === 'İzinli' ? 'İzin' : r.status,
+                                infoNote: String(r.infoNote || r.yoklamaBilgiNotu || r.memo || (Array.isArray(r) ? r[11] : '') || '')
                             })).filter(r => r.status && r.status !== '');
 
                             // Önceki tarihli kayıtları koruyarak sadece gelen günün kayıtlarını harmanla
@@ -530,7 +531,9 @@
                     note: String(r.note || ''),
                     dutyType: String(r.dutyType || 'Planlı'),
                     includeWeekend: Boolean(r.includeWeekend),
-                    aircraftTypeSnapshot: String(r.aircraftTypeSnapshot || '')
+                    aircraftTypeSnapshot: String(r.aircraftTypeSnapshot || ''),
+                    infoNote: String(r.infoNote || r.yoklamaBilgiNotu || ''),
+                    yoklamaBilgiNotu: String(r.infoNote || r.yoklamaBilgiNotu || '')
                 }));
 
                 // Bellekteki ve yerel önbellekteki veriyi ANINDA güncelle
@@ -621,7 +624,7 @@
             AlertCircle, Users, Globe, Calendar, MessageSquare, CheckCircle, 
             BarChart3, Activity, FileText, Loader2, Plus, Edit2, MoreVertical, 
             CalendarDays, Lock, BookOpen, Camera, Upload, Image: ImageIcon, User, Save,
-            RefreshCw, CheckCircle2
+            RefreshCw, CheckCircle2, Copy
         } = LucideIcons;
         const CheckIcon = CheckCircle2 || CheckCircle;
 
@@ -3054,6 +3057,17 @@
             const [detailModalOpen, setDetailModalOpen] = useState(false);
             const [detailPerson, setDetailPerson] = useState(null);
             const [detailDays, setDetailDays] = useState({});
+            const [copyFeedbackMsg, setCopyFeedbackMsg] = useState(null);
+            const [modalAutoSaveCountdown, setModalAutoSaveCountdown] = useState(null);
+            const modalAutoSaveTimerRef = useRef(null);
+            const modalCountdownIntervalRef = useRef(null);
+            const saveModalRef = useRef(null);
+
+            // Info Note States for Detail Modal
+            const [infoNoteModalOpen, setInfoNoteModalOpen] = useState(false);
+            const [selectedNoteDate, setSelectedNoteDate] = useState('');
+            const [noteInputText, setNoteInputText] = useState('');
+            const [showNotesViewer, setShowNotesViewer] = useState(false);
 
             // Tooltip state for photo hover
             const [hoverPhoto, setHoverPhoto] = useState(null);
@@ -3260,6 +3274,7 @@
 
             useEffect(() => {
                 saveRef.current = save;
+                saveModalRef.current = saveModal;
             });
 
             const handleUnitSelection = (unit) => {
@@ -3670,8 +3685,9 @@
                         }
 
                         counter++;
+                        const existingRec = allRecs.find(r => r.personId === p.id && r.date === dStr);
                         recs.push({
-                            id: `${timestamp}-${counter}-${p.id}`,
+                            id: (existingRec && existingRec.id) ? existingRec.id : `${timestamp}-${counter}-${p.id}`,
                             date: dStr,
                             personId: p.id,
                             status: s.status,
@@ -3681,7 +3697,8 @@
                             note: s.note,
                             dutyType: dType,
                             includeWeekend: !!s.includeWeekend,
-                            aircraftTypeSnapshot: selModel || undefined
+                            aircraftTypeSnapshot: selModel || undefined,
+                            infoNote: s.infoNote || (existingRec && existingRec.infoNote) || ''
                         });
 
                         if (dayOfWeek === 5 && shouldIncludeWeekend && s.includeWeekend) {
@@ -3751,7 +3768,10 @@
                     setAllRecs(freshRecs);
                     if (onSaveExternal) onSaveExternal(freshRecs);
                     setHasUnsavedChanges(false);
-                    if (!isAutoSave) {
+                    if (isAutoSave) {
+                        setSaveVerifiedMsg("15s Sonra Otomatik Kaydedildi ✓");
+                        setTimeout(() => setSaveVerifiedMsg(null), 3500);
+                    } else {
                         setSaveVerifiedMsg("Kaydedildi ✓");
                         setTimeout(() => setSaveVerifiedMsg(null), 2500);
                     }
@@ -3841,10 +3861,43 @@
                 }
             };
 
+            const clearModalAutoSave = useCallback(() => {
+                if (modalAutoSaveTimerRef.current) clearTimeout(modalAutoSaveTimerRef.current);
+                if (modalCountdownIntervalRef.current) clearInterval(modalCountdownIntervalRef.current);
+                setModalAutoSaveCountdown(null);
+            }, []);
+
+            const triggerModalAutoSaveCountdown = useCallback(() => {
+                if (modalAutoSaveTimerRef.current) clearTimeout(modalAutoSaveTimerRef.current);
+                if (modalCountdownIntervalRef.current) clearInterval(modalCountdownIntervalRef.current);
+
+                setModalAutoSaveCountdown(15);
+
+                modalCountdownIntervalRef.current = setInterval(() => {
+                    setModalAutoSaveCountdown(prev => {
+                        if (prev === null || prev <= 1) {
+                            if (modalCountdownIntervalRef.current) clearInterval(modalCountdownIntervalRef.current);
+                            return 0;
+                        }
+                        return prev - 1;
+                    });
+                }, 1000);
+
+                modalAutoSaveTimerRef.current = setTimeout(() => {
+                    if (saveModalRef.current) {
+                        saveModalRef.current(true);
+                    }
+                }, 15000);
+            }, []);
+
             const openDetailModal = (person) => {
                 if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
                 if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
                 setAutoSaveCountdown(null);
+                clearModalAutoSave();
+                setCopyFeedbackMsg(null);
+                setShowNotesViewer(false);
+                setInfoNoteModalOpen(false);
 
                 if (hasUnsavedChanges) {
                     save(true);
@@ -3871,11 +3924,14 @@
                 days.forEach(d => {
                     const dStr = normalizeDate(d);
                     const r = freshRecs.find(rec => rec.personId === person.id && rec.date === dStr && rec.status && rec.status !== '');
+                    const existingAny = freshRecs.find(rec => rec.personId === person.id && rec.date === dStr);
                     const isWe = d.getDay() === 0 || d.getDay() === 6;
                     const validStatuses = Object.values(AttendanceStatus);
 
+                    const dayNote = String((r && r.infoNote) || (existingAny && existingAny.infoNote) || '');
+
                     if (r && r.status && validStatuses.includes(r.status)) {
-                        initialStates[dStr] = { ...r };
+                        initialStates[dStr] = { ...r, infoNote: dayNote };
                     } else if (dStr === rangeStartDate && att[person.id] && att[person.id].status) {
                         initialStates[dStr] = {
                             status: att[person.id].status,
@@ -3884,7 +3940,8 @@
                             leaveType: att[person.id].leaveType,
                             note: att[person.id].note,
                             dutyType: att[person.id].dutyType,
-                            includeWeekend: att[person.id].includeWeekend
+                            includeWeekend: att[person.id].includeWeekend,
+                            infoNote: att[person.id].infoNote || dayNote
                         };
                     } else {
                         const prevDate = new Date(d); prevDate.setDate(prevDate.getDate() - 1);
@@ -3892,15 +3949,49 @@
                         const prevRec = initialStates[prevStr] || freshRecs.find(rec => rec.personId === person.id && rec.date === prevStr && rec.status && rec.status !== '');
 
                         if (isWe) {
-                            initialStates[dStr] = { status: undefined };
+                            initialStates[dStr] = { status: undefined, infoNote: dayNote };
                         } else {
-                            if (prevRec) initialStates[dStr] = { ...prevRec, id: undefined };
-                            else initialStates[dStr] = { status: AttendanceStatus.PRESENT };
+                            if (prevRec) initialStates[dStr] = { ...prevRec, id: undefined, infoNote: dayNote };
+                            else initialStates[dStr] = { status: AttendanceStatus.PRESENT, infoNote: dayNote };
                         }
                     }
                 });
                 setDetailDays(initialStates);
                 setDetailModalOpen(true);
+            };
+
+            // KULLANICI TALEBİ: "açılan pencerede her seçim yapılan günden sonra diğerlerine aktar butonu olur o pencere diğerlerine aynen aktarır"
+            const copyDayToAll = (sourceDateStr) => {
+                const src = detailDays[sourceDateStr];
+                if (!src || !src.status) {
+                    alert("Lütfen önce bu gün için bir yoklama durumu seçiniz.");
+                    return;
+                }
+                
+                setDetailDays(prev => {
+                    const next = { ...prev };
+                    Object.keys(next).forEach(dKey => {
+                        if (dKey === sourceDateStr) return;
+                        next[dKey] = {
+                            ...next[dKey],
+                            status: src.status,
+                            dutyLocation: (src.status === AttendanceStatus.DUTY || src.status === AttendanceStatus.COURSE) ? (src.dutyLocation || '') : undefined,
+                            dutyLocationDetail: src.status === AttendanceStatus.DUTY ? (src.dutyLocationDetail || '') : undefined,
+                            dutyType: src.status === AttendanceStatus.DUTY ? (src.dutyType || DutyType.PLANNED) : undefined,
+                            leaveType: src.status === AttendanceStatus.LEAVE ? (src.leaveType || LeaveType.DAILY) : undefined,
+                            note: src.status === AttendanceStatus.OTHER ? (src.note || '') : undefined,
+                            includeWeekend: !!src.includeWeekend,
+                            infoNote: next[dKey]?.infoNote || ''
+                        };
+                    });
+                    return next;
+                });
+
+                const [y, m, d] = sourceDateStr.split('-');
+                const formattedDate = `${d}.${m}.${y}`;
+                setCopyFeedbackMsg(`${formattedDate} bilgileri aralıktaki diğer tüm günlere aktarıldı ✓`);
+                setTimeout(() => setCopyFeedbackMsg(null), 3500);
+                triggerModalAutoSaveCountdown();
             };
 
             const handleModalDayChange = (dateStr, field, value) => {
@@ -3924,22 +4015,25 @@
                     }
                     return next;
                 });
+                triggerModalAutoSaveCountdown();
             };
 
             const handleModalStatusChange = (dateStr, status) => {
                 setDetailDays(prev => {
+                    const newDayState = {
+                        ...prev[dateStr],
+                        status,
+                        dutyLocation: (status === AttendanceStatus.DUTY || status === AttendanceStatus.COURSE) ? (prev[dateStr]?.dutyLocation || '') : undefined,
+                        dutyLocationDetail: status === AttendanceStatus.DUTY ? (prev[dateStr]?.dutyLocationDetail || '') : undefined,
+                        dutyType: status === AttendanceStatus.DUTY ? (prev[dateStr]?.dutyType || DutyType.PLANNED) : undefined,
+                        leaveType: status === AttendanceStatus.LEAVE ? (prev[dateStr]?.leaveType || LeaveType.DAILY) : undefined,
+                        includeWeekend: status === AttendanceStatus.DUTY ? true : (prev[dateStr]?.includeWeekend || false),
+                        note: status === AttendanceStatus.OTHER ? prev[dateStr]?.note : undefined
+                    };
+
                     const next = {
                         ...prev,
-                        [dateStr]: {
-                            ...prev[dateStr],
-                            status,
-                            dutyLocation: (status === AttendanceStatus.DUTY || status === AttendanceStatus.COURSE) ? (prev[dateStr]?.dutyLocation || '') : undefined,
-                            dutyLocationDetail: status === AttendanceStatus.DUTY ? (prev[dateStr]?.dutyLocationDetail || '') : undefined,
-                            dutyType: status === AttendanceStatus.DUTY ? (prev[dateStr]?.dutyType || DutyType.PLANNED) : undefined,
-                            leaveType: status === AttendanceStatus.LEAVE ? (prev[dateStr]?.leaveType || LeaveType.DAILY) : undefined,
-                            includeWeekend: status === AttendanceStatus.DUTY ? true : (prev[dateStr]?.includeWeekend || false),
-                            note: status === AttendanceStatus.OTHER ? prev[dateStr]?.note : undefined
-                        }
+                        [dateStr]: newDayState
                     };
 
                     const dObj = new Date(dateStr);
@@ -3957,10 +4051,74 @@
 
                     return next;
                 });
+                triggerModalAutoSaveCountdown();
             };
 
-            const saveModal = async () => {
+            // 📋 Yoklama Bilgi Notları (Detaylı Giriş Modalı için)
+            const modalNotes = useMemo(() => {
+                if (!detailDays) return [];
+                return Object.keys(detailDays)
+                    .filter(dStr => detailDays[dStr]?.infoNote && String(detailDays[dStr].infoNote).trim() !== '')
+                    .sort()
+                    .map(dStr => ({
+                        dateStr: dStr,
+                        infoNote: String(detailDays[dStr].infoNote).trim(),
+                        status: detailDays[dStr]?.status,
+                        dutyLocation: detailDays[dStr]?.dutyLocation,
+                        leaveType: detailDays[dStr]?.leaveType
+                    }));
+            }, [detailDays]);
+
+            const openNoteModal = (targetDate = null) => {
+                const sortedDays = Object.keys(detailDays).sort();
+                const d = targetDate || sortedDays[0] || rangeStartDate;
+                setSelectedNoteDate(d);
+                setNoteInputText(detailDays[d]?.infoNote || '');
+                setInfoNoteModalOpen(true);
+            };
+
+            const handleSelectNoteDate = (dStr) => {
+                setSelectedNoteDate(dStr);
+                setNoteInputText(detailDays[dStr]?.infoNote || '');
+            };
+
+            const handleSaveNote = () => {
+                if (!selectedNoteDate) return;
+                const trimmed = noteInputText.trim();
+                setDetailDays(prev => ({
+                    ...prev,
+                    [selectedNoteDate]: {
+                        ...prev[selectedNoteDate],
+                        infoNote: trimmed
+                    }
+                }));
+                triggerModalAutoSaveCountdown();
+                setInfoNoteModalOpen(false);
+                const [y, m, d] = selectedNoteDate.split('-');
+                setCopyFeedbackMsg(`${d}.${m}.${y} için bilgi notu kaydedildi ✓`);
+                setTimeout(() => setCopyFeedbackMsg(null), 3500);
+            };
+
+            const handleDeleteNote = () => {
+                if (!selectedNoteDate) return;
+                setDetailDays(prev => ({
+                    ...prev,
+                    [selectedNoteDate]: {
+                        ...prev[selectedNoteDate],
+                        infoNote: ''
+                    }
+                }));
+                triggerModalAutoSaveCountdown();
+                setInfoNoteModalOpen(false);
+                const [y, m, d] = selectedNoteDate.split('-');
+                setCopyFeedbackMsg(`${d}.${m}.${y} bilgi notu silindi ✓`);
+                setTimeout(() => setCopyFeedbackMsg(null), 3500);
+            };
+
+            const saveModal = async (isAutoSave = false) => {
                 if (!detailPerson) return;
+
+                clearModalAutoSave();
 
                 if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
                 if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
@@ -3980,7 +4138,8 @@
                             counter++;
                             recs.push({
                                 ...existingRec,
-                                status: '' 
+                                status: '',
+                                infoNote: s.infoNote !== undefined ? s.infoNote : ''
                             });
                         }
                         return;
@@ -3999,7 +4158,8 @@
                         note: s.note,
                         dutyType: s.dutyType,
                         includeWeekend: !!s.includeWeekend,
-                        aircraftTypeSnapshot: selModel || undefined
+                        aircraftTypeSnapshot: selModel || undefined,
+                        infoNote: s.infoNote !== undefined ? s.infoNote : ((existingRec && existingRec.infoNote) || '')
                     });
                 });
 
@@ -4030,7 +4190,8 @@
                                 note: s.note,
                                 dutyType: s.dutyType,
                                 includeWeekend: !!s.includeWeekend,
-                                aircraftTypeSnapshot: selModel || undefined
+                                aircraftTypeSnapshot: selModel || undefined,
+                                infoNote: s.infoNote !== undefined ? s.infoNote : ((existingRec && existingRec.infoNote) || '')
                             });
                         });
                     });
@@ -4052,13 +4213,14 @@
 
                     if (onSaveExternal) onSaveExternal(freshRecs);
                     setHasUnsavedChanges(false);
-                    setSaveVerifiedMsg("Kaydedildi ✓");
-                    setTimeout(() => setSaveVerifiedMsg(null), 2500);
+                    setSaveVerifiedMsg(isAutoSave ? "15s Sonra Otomatik Kaydedildi ✓" : "Kaydedildi ✓");
+                    setTimeout(() => setSaveVerifiedMsg(null), 3500);
                 } catch(e) {
                     console.error("Detail save error", e);
                     setSaveVerifiedMsg(null);
                     alert('Kayıt hatası: ' + (e.message || 'Detaylı veri kaydedilemedi.'));
                 } finally {
+                    clearModalAutoSave();
                     setDetailModalOpen(false);
                     setDetailPerson(null);
                     setIsSaving(false);
@@ -4332,25 +4494,25 @@
             const renderPersonRow = (p, i) => {
                 const s = att[p.id] || {};
                 const isWeeklyMode = rangeStartDate !== rangeEndDate;
-                let shouldBlur = false;
-                if (isWeeklyMode) {
-                    const dInR = getDaysInRange(rangeStartDate, rangeEndDate).filter(d => d.getDay() !== 0 && d.getDay() !== 6);
-                    const rInR = dInR.map(d => { 
-                        const dStr = normalizeDate(d); 
-                        return allRecs.find(r => r.personId === p.id && r.date === dStr && r.status && r.status !== ''); 
-                    }).filter(r => !!r);
-                    if (rInR.length > 0) { if (rInR.length < dInR.length) shouldBlur = true; else { const fR = rInR[0]; if (!rInR.every(r => r.status === fR.status && (r.dutyType || DutyType.PLANNED) === (fR.dutyType || DutyType.PLANNED) && r.dutyLocation === fR.dutyLocation && r.leaveType === fR.leaveType)) shouldBlur = true; } }
-                }
+                // KULLANICI KURALI: Tarih aralığında gün sayısı 1 gün hariç (yani aralık > 1 gün ise)
+                // ne olursa olsun detay gör kısmı hepsinde olacak (aynı bile olsalar da)
+                const shouldBlur = isWeeklyMode;
+
                 return (
                     <div key={p.id} className="relative group">
-                        <div className={`bg-forest-950/40 p-3 rounded border border-forest-800 flex flex-col xl:flex-row gap-4 items-start xl:items-center justify-between transition-all duration-300 ${shouldBlur ? 'opacity-30 blur-[2px] pointer-events-none' : ''}`}>
-                            <div className="w-full xl:w-1/4 flex gap-2 items-center">
+                        <div className="bg-forest-950/40 p-3 rounded border border-forest-800 flex flex-col xl:flex-row gap-4 items-start xl:items-center justify-between transition-all duration-300">
+                            {/* SOL HİZA: Personel fotoğrafı, adı, rütbe, sıralama - KULLANICI TALEBİ: ASLA FLU OLMAZ */}
+                            <div className="w-full xl:w-1/4 flex gap-2 items-center flex-shrink-0">
                                 <div className="flex flex-col gap-1 mr-2">
                                     <button onClick={() => movePerson(i, 'up')} className="text-forest-500 hover:text-white"><ArrowUp size={14} /></button>
                                     <button onClick={() => movePerson(i, 'down')} className="text-forest-500 hover:text-white"><ArrowDown size={14} /></button>
                                 </div>
-                                {rangeStartDate !== rangeEndDate && <button onClick={() => openDetailModalWithAuth(p)} className="bg-blue-600 p-1.5 rounded shadow-sm hover:bg-blue-500"><CalendarDays size={18} /></button>}
-                                <span className="text-forest-500 w-6 text-center">{i + 1}</span>
+                                {isWeeklyMode && (
+                                    <button onClick={() => openDetailModalWithAuth(p)} className="bg-blue-600 p-1.5 rounded shadow-sm hover:bg-blue-500 text-white" title="Detaylı Giriş">
+                                        <CalendarDays size={18} />
+                                    </button>
+                                )}
+                                <span className="text-forest-500 w-6 text-center font-bold text-sm">{i + 1}</span>
                                 <div 
                                     className="cursor-help relative group/name flex items-center gap-3"
                                     onMouseEnter={(e) => {
@@ -4364,7 +4526,7 @@
                                     }}
                                     onMouseLeave={() => setHoverPhoto(null)}
                                 >
-                                    <div className="w-10 h-10 rounded border border-forest-700 overflow-hidden flex-shrink-0 bg-forest-900">
+                                    <div className="w-10 h-10 rounded border border-forest-700 overflow-hidden flex-shrink-0 bg-forest-900 shadow">
                                         <SafeImage src={p.photoUrl} personId={p.id} className="personnel-photo-square" />
                                     </div>
                                     <div>
@@ -4373,21 +4535,37 @@
                                     </div>
                                 </div>
                             </div>
-                            <AttendanceControl 
-                                personId={p.id} 
-                                state={s} 
-                                isWeeklyMode={isWeeklyMode} 
-                                aircraftModel={selModel} 
-                                onChangeStatus={handleStatusChangeWithAuth} 
-                                onChangeDetail={handleDetailChangeWithAuth} 
-                                isWeekend={(() => {
-                                    const d = new Date(rangeStartDate + 'T12:00:00');
-                                    return d.getDay() === 0 || d.getDay() === 6;
-                                })()}
-                                allAttendance={allRecs}
-                            />
+
+                            {/* SAĞ HİZA: BUTONLARIN OLDUĞU HİZA - KULLANICI TALEBİ: SADECE BURASI FLU VE BUTON BURADA ÇIKAR */}
+                            <div className="flex-1 w-full relative">
+                                <div className={`transition-all duration-300 ${shouldBlur ? 'opacity-25 blur-[3px] pointer-events-none select-none' : ''}`}>
+                                    <AttendanceControl 
+                                        personId={p.id} 
+                                        state={s} 
+                                        isWeeklyMode={isWeeklyMode} 
+                                        aircraftModel={selModel} 
+                                        onChangeStatus={handleStatusChangeWithAuth} 
+                                        onChangeDetail={handleDetailChangeWithAuth} 
+                                        isWeekend={(() => {
+                                            const d = new Date(rangeStartDate + 'T12:00:00');
+                                            return d.getDay() === 0 || d.getDay() === 6;
+                                        })()}
+                                        allAttendance={allRecs}
+                                    />
+                                </div>
+                                {shouldBlur && (
+                                    <div className="absolute inset-0 flex items-center justify-center z-10 p-2">
+                                        <button 
+                                            type="button"
+                                            onClick={() => openDetailModalWithAuth(p)}
+                                            className="bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-semibold text-sm px-5 py-2.5 rounded-lg shadow-xl flex items-center gap-2 border border-emerald-400 transition-all cursor-pointer hover:shadow-emerald-900/50"
+                                        >
+                                            <Edit2 size={16} /> Ayrıntıyı Gör ve Düzenle
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
                         </div>
-                        {shouldBlur && <div className="absolute inset-0 flex items-center justify-center"><Button onClick={() => openDetailModalWithAuth(p)}><Edit2 size={16} className="mr-2" /> Ayrıntıyı Gör ve Düzenle</Button></div>}
                     </div>
                 );
             };
@@ -5282,42 +5460,351 @@
 
                     {detailModalOpen && detailPerson && (
                         <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4 overflow-auto">
-                            <div className="bg-forest-900 border border-forest-600 w-full max-w-4xl rounded-lg shadow-2xl flex flex-col max-h-[90vh]">
-                                <div className="p-4 border-b border-forest-700 flex justify-between items-center bg-forest-950"><div><h3 className="text-xl font-bold text-white">{detailPerson.fullName}</h3><p className="text-sm text-forest-400">Detaylı Günlük Giriş</p></div><button onClick={() => { setDetailModalOpen(false); setDetailPerson(null) }}><X size={24} className="text-forest-400 hover:text-white" /></button></div>
-                                <div className="p-4 overflow-y-auto flex-1 space-y-3">{Object.keys(detailDays).sort().map(dStr => {
-                                    const dateObjArr = dStr.split('-').map(Number);
-                                    const noonDate = new Date(dateObjArr[0], dateObjArr[1]-1, dateObjArr[2], 12,0,0);
-                                    return (
-                                        <div key={dStr} className={`p-3 rounded border ${noonDate.getDay() === 0 || noonDate.getDay() === 6 ? 'bg-forest-800/30 border-forest-700' : 'bg-forest-950/30 border-forest-800'} flex flex-col lg:flex-row items-center gap-4`}>
-                                            <div className="w-full lg:w-32 flex-shrink-0 text-center lg:text-left">
-                                                <div className="font-bold text-white">{noonDate.toLocaleDateString('tr-TR')}</div>
-                                                <div className="text-xs text-forest-400 uppercase">{noonDate.toLocaleDateString('tr-TR', { weekday: 'long' })}</div>
-                                            </div>
-                                            <div className="flex-1 w-full">
-                                                <AttendanceControl 
-                                                    personId={dStr} 
-                                                    state={detailDays[dStr]} 
-                                                    onChangeStatus={(id, s) => handleModalStatusChange(id, s)} 
-                                                    onChangeDetail={(id, f, v) => handleModalDayChange(id, f, v)} 
-                                                    isWeekend={noonDate.getDay() === 0 || noonDate.getDay() === 6}
-                                                    allAttendance={allRecs}
-                                                />
-                                            </div>
+                            <div className="bg-forest-900 border border-forest-600 w-full max-w-5xl rounded-lg shadow-2xl flex flex-col max-h-[90vh]">
+                                <div className="p-4 border-b border-forest-700 flex flex-wrap justify-between items-center gap-3 bg-forest-950">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 rounded border border-forest-700 overflow-hidden flex-shrink-0 bg-forest-900 shadow">
+                                            <SafeImage src={detailPerson.photoUrl} personId={detailPerson.id} className="personnel-photo-square" />
                                         </div>
-                                    )
-                                })}</div>
-                                <div className="p-4 border-t border-forest-700 bg-forest-950 flex justify-end gap-2">
-                                    <Button variant="secondary" onClick={() => { setDetailModalOpen(false); setDetailPerson(null) }} disabled={isSaving}>İptal</Button>
-                                    <Button onClick={saveModal} disabled={isSaving} className="flex items-center gap-2">
-                                        {isSaving ? (
-                                            <>
-                                                <LucideIcons.RefreshCw size={16} className="animate-spin" />
-                                                <span>Kaydediliyor...</span>
-                                            </>
-                                        ) : (
-                                            <span>Kaydet</span>
+                                        <div>
+                                            <h3 className="text-xl font-bold text-white flex items-center gap-2">
+                                                {detailPerson.fullName}
+                                            </h3>
+                                            <p className="text-sm text-forest-400">
+                                                Detaylı Günlük Giriş ({rangeStartDate} / {rangeEndDate})
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center gap-2 sm:gap-3 flex-wrap justify-end">
+                                        {copyFeedbackMsg && (
+                                            <span className="text-xs font-bold text-emerald-400 bg-emerald-950/80 border border-emerald-600 px-2.5 py-1 rounded animate-fade-in shadow">
+                                                {copyFeedbackMsg}
+                                            </span>
                                         )}
-                                    </Button>
+
+                                        {modalNotes.length > 0 && (
+                                            <button
+                                                type="button"
+                                                onClick={() => setShowNotesViewer(prev => !prev)}
+                                                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/60 hover:bg-amber-500/30 font-bold text-xs transition-all shadow shadow-amber-950/40 cursor-pointer animate-pulse"
+                                                title="Bu kişi için aralıktaki kayıtlı yoklama bilgi notlarını görüntüle"
+                                            >
+                                                <MessageSquare size={15} className="text-amber-400" />
+                                                <span>+{modalNotes.length} Not</span>
+                                            </button>
+                                        )}
+
+                                        <button
+                                            type="button"
+                                            onClick={() => openNoteModal()}
+                                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-forest-800 hover:bg-forest-700 text-emerald-300 hover:text-white border border-forest-600 hover:border-emerald-500/60 font-semibold text-xs transition-all shadow cursor-pointer"
+                                            title="Seçilen tarih aralığındaki bir güne yoklama bilgi/hatırlatma notu ekle"
+                                        >
+                                            <LucideIcons.FileEdit size={14} className="text-emerald-400" />
+                                            <span>Yoklama Bilgi Notu</span>
+                                        </button>
+
+                                        <button onClick={() => { clearModalAutoSave(); setDetailModalOpen(false); setDetailPerson(null); }} className="text-forest-400 hover:text-white p-1 rounded hover:bg-forest-800 transition-colors">
+                                            <X size={24} />
+                                        </button>
+                                    </div>
+                                </div>
+                                <div className="p-4 overflow-y-auto flex-1 space-y-3">
+                                    {Object.keys(detailDays).sort().map((dStr, idx) => {
+                                        const dateObjArr = dStr.split('-').map(Number);
+                                        const noonDate = new Date(dateObjArr[0], dateObjArr[1]-1, dateObjArr[2], 12,0,0);
+                                        const isWe = noonDate.getDay() === 0 || noonDate.getDay() === 6;
+                                        return (
+                                            <div key={dStr} className={`p-3 rounded border ${isWe ? 'bg-forest-800/30 border-forest-700' : 'bg-forest-950/30 border-forest-800'} flex flex-col lg:flex-row items-center gap-4 transition-colors hover:border-forest-600`}>
+                                                <div className="w-full lg:w-48 flex-shrink-0 flex lg:flex-col items-center lg:items-start justify-between lg:justify-center gap-2">
+                                                    <div>
+                                                        <div className="font-bold text-white text-sm sm:text-base flex items-center gap-1.5">
+                                                            <span>{noonDate.toLocaleDateString('tr-TR')}</span>
+                                                            {idx === 0 && (
+                                                                <span className="text-[10px] bg-emerald-800/80 text-emerald-200 border border-emerald-600 px-1.5 py-0.2 rounded font-semibold">
+                                                                    1. Gün
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                        <div className={`text-xs uppercase font-medium ${isWe ? 'text-amber-400 font-bold' : 'text-forest-400'}`}>
+                                                            {noonDate.toLocaleDateString('tr-TR', { weekday: 'long' })}
+                                                        </div>
+                                                        {detailDays[dStr]?.infoNote && String(detailDays[dStr].infoNote).trim() !== '' && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => openNoteModal(dStr)}
+                                                                className="mt-1 flex items-center gap-1.5 text-xs bg-amber-950/80 text-amber-300 border border-amber-600/60 px-2 py-0.5 rounded hover:bg-amber-900 transition-colors shadow-sm cursor-pointer max-w-full text-left"
+                                                                title={`Bilgi Notu: ${detailDays[dStr].infoNote}\nDüzenlemek için tıklayınız.`}
+                                                            >
+                                                                <MessageSquare size={12} className="text-amber-400 flex-shrink-0" />
+                                                                <span className="truncate max-w-[130px] font-medium">{detailDays[dStr].infoNote}</span>
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                    <div className="flex items-center gap-1.5">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => copyDayToAll(dStr)}
+                                                            className="text-xs font-semibold bg-emerald-700 hover:bg-emerald-600 active:scale-95 text-white px-2.5 py-1.5 rounded flex items-center gap-1.5 shadow transition-all border border-emerald-500 whitespace-nowrap cursor-pointer"
+                                                            title="Bu günün yoklama durumunu ve detaylarını aralıktaki diğer tüm günlere aktar"
+                                                        >
+                                                            <Copy size={13} />
+                                                            <span>Diğerlerine Aktar</span>
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => openNoteModal(dStr)}
+                                                            className={`text-xs font-semibold px-2 py-1.5 rounded flex items-center gap-1 shadow transition-all border whitespace-nowrap cursor-pointer ${detailDays[dStr]?.infoNote ? 'bg-amber-900/60 text-amber-200 border-amber-600 hover:bg-amber-800' : 'bg-forest-800 hover:bg-forest-700 text-forest-200 hover:text-white border-forest-600'}`}
+                                                            title="Bu güne bilgi / hatırlatma notu ekle veya düzenle"
+                                                        >
+                                                            <LucideIcons.FileEdit size={13} className={detailDays[dStr]?.infoNote ? 'text-amber-400' : 'text-emerald-400'} />
+                                                            <span>Not</span>
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                                <div className="flex-1 w-full">
+                                                    <AttendanceControl 
+                                                        personId={dStr} 
+                                                        state={detailDays[dStr]} 
+                                                        isWeeklyMode={true}
+                                                        onChangeStatus={(id, s) => handleModalStatusChange(id, s)} 
+                                                        onChangeDetail={(id, f, v) => handleModalDayChange(id, f, v)} 
+                                                        isWeekend={isWe}
+                                                        allAttendance={allRecs}
+                                                    />
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                                <div className="p-4 border-t border-forest-700 bg-forest-950 flex flex-col sm:flex-row justify-between items-center gap-3">
+                                    <div className="text-xs text-forest-400">
+                                        * Her günün durumunu ayrı ayrı veya <span className="text-emerald-400 font-semibold">"Diğerlerine Aktar"</span> butonuyla topluca belirleyebilirsiniz.
+                                    </div>
+                                    <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                                        <Button variant="secondary" onClick={() => { clearModalAutoSave(); setDetailModalOpen(false); setDetailPerson(null); }} disabled={isSaving}>İptal</Button>
+                                        <Button 
+                                            onClick={() => saveModal(false)} 
+                                            disabled={isSaving} 
+                                            className={`flex items-center gap-2 transition-all ${modalAutoSaveCountdown !== null ? 'bg-emerald-600 hover:bg-emerald-500 border border-emerald-400 shadow-[0_0_12px_rgba(16,185,129,0.35)]' : 'bg-emerald-600 hover:bg-emerald-500'}`}
+                                        >
+                                            {isSaving ? (
+                                                <>
+                                                    <LucideIcons.RefreshCw size={16} className="animate-spin" />
+                                                    <span>Kaydediliyor...</span>
+                                                </>
+                                            ) : modalAutoSaveCountdown !== null ? (
+                                                <>
+                                                    <Save size={16} />
+                                                    <span>Kaydet ({modalAutoSaveCountdown}s Sonra Otomatik Kaydedilecek)</span>
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <Save size={16} />
+                                                    <span>Kaydet</span>
+                                                </>
+                                            )}
+                                        </Button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* 📋 Yoklama Bilgi Notları Görüntüleme Modalı */}
+                    {showNotesViewer && detailPerson && (
+                        <div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in">
+                            <div className="bg-forest-900 border border-forest-600 w-full max-w-lg rounded-xl shadow-2xl flex flex-col max-h-[85vh] overflow-hidden">
+                                <div className="p-4 border-b border-forest-700 flex justify-between items-center bg-forest-950">
+                                    <div className="flex items-center gap-2.5">
+                                        <div className="p-2 rounded-lg bg-amber-500/20 text-amber-400 border border-amber-500/40">
+                                            <MessageSquare size={20} />
+                                        </div>
+                                        <div>
+                                            <h4 className="text-base font-bold text-white">Yoklama Bilgi Notları</h4>
+                                            <p className="text-xs text-forest-300">{detailPerson.fullName} ({modalNotes.length} Not Kayıtlı)</p>
+                                        </div>
+                                    </div>
+                                    <button 
+                                        type="button"
+                                        onClick={() => setShowNotesViewer(false)} 
+                                        className="text-forest-400 hover:text-white p-1.5 rounded-lg hover:bg-forest-800 transition-colors"
+                                    >
+                                        <X size={20} />
+                                    </button>
+                                </div>
+                                
+                                <div className="p-4 overflow-y-auto space-y-3 flex-1 custom-scrollbar">
+                                    {modalNotes.map((item) => {
+                                        const [y, m, d] = item.dateStr.split('-').map(Number);
+                                        const dt = new Date(y, m - 1, d, 12, 0, 0);
+                                        const dateFormatted = dt.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric', weekday: 'long' });
+                                        return (
+                                            <div key={item.dateStr} className="p-3.5 rounded-lg border border-amber-500/30 bg-amber-950/20 hover:border-amber-500/60 transition-all space-y-2">
+                                                <div className="flex justify-between items-start gap-2">
+                                                    <div>
+                                                        <div className="font-bold text-white text-sm flex items-center gap-2">
+                                                            <span>{dateFormatted}</span>
+                                                            {item.status && (
+                                                                <span className="text-[10px] px-2 py-0.5 rounded font-semibold bg-forest-800 text-forest-200 border border-forest-600">
+                                                                    {item.status}{item.dutyLocation ? ` (${item.dutyLocation})` : ''}{item.leaveType ? ` (${item.leaveType})` : ''}
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            setShowNotesViewer(false);
+                                                            openNoteModal(item.dateStr);
+                                                        }}
+                                                        className="text-xs text-amber-300 hover:text-amber-200 bg-amber-900/60 hover:bg-amber-900 px-2.5 py-1 rounded border border-amber-600/50 flex items-center gap-1 cursor-pointer transition-colors"
+                                                    >
+                                                        <LucideIcons.Edit2 size={12} />
+                                                        <span>Düzenle</span>
+                                                    </button>
+                                                </div>
+                                                <div className="bg-forest-950/70 border border-forest-800 p-3 rounded-lg text-sm text-forest-100 whitespace-pre-wrap leading-relaxed shadow-inner">
+                                                    {item.infoNote}
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+
+                                <div className="p-3.5 border-t border-forest-700 bg-forest-950 flex flex-col sm:flex-row justify-between items-center gap-2">
+                                    <div className="text-[11px] text-forest-400 italic">
+                                        * Bu notlar hatırlatma amaçlıdır; Excel raporlarına yansımaz, L sütununda saklanır.
+                                    </div>
+                                    <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setShowNotesViewer(false);
+                                                openNoteModal();
+                                            }}
+                                            className="px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                                        >
+                                            <Plus size={14} />
+                                            <span>Yeni Not Ekle</span>
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowNotesViewer(false)}
+                                            className="px-3.5 py-1.5 rounded-lg bg-forest-800 hover:bg-forest-700 text-forest-200 text-xs font-semibold transition-colors cursor-pointer"
+                                        >
+                                            Kapat
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* 📝 Yoklama Bilgi Notu Ekle / Düzenle Modalı */}
+                    {infoNoteModalOpen && detailPerson && (
+                        <div className="fixed inset-0 bg-black/80 z-[70] flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in">
+                            <div className="bg-forest-900 border border-forest-600 w-full max-w-lg rounded-xl shadow-2xl flex flex-col overflow-hidden animate-slide-down">
+                                <div className="p-4 border-b border-forest-700 flex justify-between items-center bg-forest-950">
+                                    <div className="flex items-center gap-2.5">
+                                        <div className="p-2 rounded-lg bg-emerald-500/20 text-emerald-400 border border-emerald-500/40">
+                                            <LucideIcons.FileEdit size={20} />
+                                        </div>
+                                        <div>
+                                            <h4 className="text-base font-bold text-white">Yoklama Bilgi Notu Ekle / Düzenle</h4>
+                                            <p className="text-xs text-forest-300">{detailPerson.fullName}</p>
+                                        </div>
+                                    </div>
+                                    <button 
+                                        type="button"
+                                        onClick={() => setInfoNoteModalOpen(false)} 
+                                        className="text-forest-400 hover:text-white p-1.5 rounded-lg hover:bg-forest-800 transition-colors"
+                                    >
+                                        <X size={20} />
+                                    </button>
+                                </div>
+
+                                <div className="p-5 space-y-4 bg-forest-900">
+                                    <div>
+                                        <label className="block text-xs font-bold text-forest-300 mb-1.5 uppercase tracking-wide">
+                                            Notun Ekleneceği Gün
+                                        </label>
+                                        <select
+                                            value={selectedNoteDate}
+                                            onChange={(e) => handleSelectNoteDate(e.target.value)}
+                                            className="w-full bg-forest-950 border border-forest-600 text-white rounded-lg p-2.5 text-sm focus:outline-none focus:border-emerald-500"
+                                        >
+                                            {Object.keys(detailDays).sort().map(dKey => {
+                                                const [y, m, d] = dKey.split('-').map(Number);
+                                                const dt = new Date(y, m - 1, d, 12, 0, 0);
+                                                const dayName = dt.toLocaleDateString('tr-TR', { weekday: 'long' });
+                                                const dayFormatted = `${d < 10 ? '0' + d : d}.${m < 10 ? '0' + m : m}.${y}`;
+                                                const dayState = detailDays[dKey];
+                                                const statusStr = dayState?.status ? ` - [${dayState.status}${dayState.dutyLocation ? ': ' + dayState.dutyLocation : ''}]` : ' - [Belirtilmedi]';
+                                                const hasExisting = dayState?.infoNote && String(dayState.infoNote).trim() !== '' ? ' (📝 Not Var)' : '';
+                                                return (
+                                                    <option key={dKey} value={dKey}>
+                                                        {dayFormatted} {dayName} {statusStr} {hasExisting}
+                                                    </option>
+                                                );
+                                            })}
+                                        </select>
+                                    </div>
+
+                                    <div>
+                                        <div className="flex justify-between items-center mb-1.5">
+                                            <label className="text-xs font-bold text-forest-300 uppercase tracking-wide">
+                                                Yoklama Bilgi / Hatırlatma Notu (Sütun L)
+                                            </label>
+                                            {detailDays[selectedNoteDate]?.infoNote && (
+                                                <span className="text-[11px] text-amber-400 bg-amber-950/80 px-2 py-0.5 rounded border border-amber-600/50 font-semibold">
+                                                    Mevcut Not Bulunuyor
+                                                </span>
+                                            )}
+                                        </div>
+                                        <textarea
+                                            value={noteInputText}
+                                            onChange={(e) => setNoteInputText(e.target.value)}
+                                            placeholder="Örn: Görev onayı henüz imzadan çıkmadı, yarın kontrol edilecek..."
+                                            rows={4}
+                                            className="w-full bg-forest-950 border border-forest-600 text-white rounded-lg p-3 text-sm focus:outline-none focus:border-emerald-500 leading-relaxed custom-scrollbar placeholder-forest-500"
+                                        />
+                                        <p className="text-[11px] text-forest-400 mt-1.5 leading-normal">
+                                            ℹ️ Bu not yoklamayı alan kişi için hatırlatma niteliğindedir. Excel raporları ve istatistiklere yansımaz; yoklama tablosunda ilgili günün <strong className="text-emerald-300">L sütununa</strong> işlenir.
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <div className="p-4 border-t border-forest-700 bg-forest-950 flex flex-wrap justify-between items-center gap-2">
+                                    <div>
+                                        {detailDays[selectedNoteDate]?.infoNote && (
+                                            <button
+                                                type="button"
+                                                onClick={handleDeleteNote}
+                                                className="px-3 py-1.5 rounded-lg bg-red-950/80 hover:bg-red-900 text-red-300 border border-red-700 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                                            >
+                                                <Trash2 size={14} />
+                                                <span>Notu Sil</span>
+                                            </button>
+                                        )}
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={() => setInfoNoteModalOpen(false)}
+                                            className="px-3.5 py-1.5 rounded-lg bg-forest-800 hover:bg-forest-700 text-forest-200 text-xs font-semibold transition-colors cursor-pointer"
+                                        >
+                                            İptal
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={handleSaveNote}
+                                            className="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1.5 transition-colors shadow shadow-emerald-950/40 cursor-pointer"
+                                        >
+                                            <Save size={14} />
+                                            <span>Notu Kaydet</span>
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         </div>
