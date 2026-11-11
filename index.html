@@ -3080,6 +3080,10 @@
             const [reportSearch, setReportSearch] = useState('');
             const [reportModalType, setReportModalType] = useState(null);
 
+            // Statistics Exclusion States
+            const [statExcludedPersonIds, setStatExcludedPersonIds] = useState([]);
+            const [statExcludeInput, setStatExcludeInput] = useState('');
+
             const showAttendanceFromReport = () => {
                 if (reportUnit === 'TÜM BİRİMLER') {
                     alert('Lütfen bir birim seçiniz.');
@@ -4491,6 +4495,725 @@
                 } catch(e) { alert("Rapor hatası: " + e); } finally { setLoading(false); }
             };
 
+            const exportStatisticsExcel = async () => {
+                setLoading(true);
+                try {
+                    const freshRecs = storageService.getAttendanceSync();
+                    const finalPersonnel = await storageService.getPersonnelSync();
+                    const unitOrder = ["BELL-429", "C-650", "B-360", "T-70", "AT-802", "İDARİ"];
+                    const fUK = (p) => {
+                        if (p.unit && unitOrder.includes(p.unit)) return p.unit;
+                        if (p.unit === 'İDARİ BİRİM' || p.unit === 'TEKNİK EKİP' || p.unit === 'YER DESTEK') return "İDARİ";
+                        const titleUpper = (p.title || '').toLocaleUpperCase('tr-TR');
+                        if (titleUpper.includes('BELL')) return "BELL-429";
+                        if (titleUpper.includes('C-650')) return "C-650";
+                        if (titleUpper.includes('B-360')) return "B-360";
+                        if (titleUpper.includes('T-70')) return "T-70";
+                        if (titleUpper.includes('AT-802')) return "AT-802";
+                        return "İDARİ";
+                    };
+
+                    const sDate = dates.start || getTodayString();
+                    const eDate = dates.end || getTodayString();
+                    const days = getDaysInRange(sDate, eDate);
+                    const totalPeriodDays = days.length;
+
+                    const formatTrDate = (dStr) => {
+                        if (!dStr) return { day: '', month: '', year: '', full: '' };
+                        const parts = dStr.split('-');
+                        if (parts.length !== 3) return { day: '', month: '', year: '', full: dStr };
+                        const [y, m, d] = parts;
+                        const dateObj = new Date(Number(y), Number(m) - 1, Number(d), 12, 0, 0);
+                        const day = String(Number(d)).padStart(2, '0');
+                        const month = dateObj.toLocaleDateString('tr-TR', { month: 'long' }).toLocaleUpperCase('tr-TR');
+                        return { day, month, year: y, full: `${day}.${m.padStart(2, '0')}.${y}` };
+                    };
+                    const startTr = formatTrDate(sDate);
+                    const endTr = formatTrDate(eDate);
+                    const dateTitleRange = (startTr.year === endTr.year)
+                        ? `${startTr.day} ${startTr.month} - ${endTr.day} ${endTr.month} ${endTr.year}`
+                        : `${startTr.full} - ${endTr.full}`;
+
+                    // Filter active personnel (exclude İDARİ and exclude MURAT AKMEŞE per user request 2)
+                    let targetP = finalPersonnel.filter(p => !(p.activeUntil && p.activeUntil < sDate) && !(p.activeFrom && p.activeFrom > eDate));
+                    targetP = targetP.filter(p => {
+                        if (fUK(p) === 'İDARİ') return false;
+                        const nameUpper = (p.fullName || '').toLocaleUpperCase('tr-TR').trim();
+                        if (nameUpper.includes('MURAT AKMEŞE') || nameUpper.includes('MURAT AKMESE')) return false;
+                        return true;
+                    });
+
+                    // Check if person is BELL-429 TAŞRA (Includes DURSUN ŞİMŞEK, ÜMİT NAİLLİOĞLU per user request 1)
+                    const isBellTasra = (p) => {
+                        const nameUpper = (p.fullName || '').toLocaleUpperCase('tr-TR').trim();
+                        if (nameUpper.includes('DURSUN ŞİMŞEK') || nameUpper.includes('DURSUN SIMSEK') ||
+                            nameUpper.includes('ÜMİT NAİLLİOĞLU') || nameUpper.includes('UMIT NAILLIOGLU') ||
+                            nameUpper.includes('(İZMİR)') || nameUpper.includes('(IZMIR)') ||
+                            nameUpper.includes('(ANTALYA)') ||
+                            nameUpper.includes('(MUĞLA)') || nameUpper.includes('(MUGLA)') ||
+                            nameUpper.includes('SERHAT İVECAN') || nameUpper.includes('SERHAT IVECAN') ||
+                            nameUpper.includes('YÜCEL KIVRAK') || nameUpper.includes('YUCEL KIVRAK') ||
+                            nameUpper.includes('BİLGE ERDOĞAN') || nameUpper.includes('BILGE ERDOGAN') ||
+                            nameUpper.includes('ADEM BİLGİN') || nameUpper.includes('ADEM BILGIN') ||
+                            nameUpper.includes('TAŞRA') || nameUpper.includes('TASRA')) {
+                            return true;
+                        }
+                        const match = nameUpper.match(/\(([^)]+)\)/);
+                        if (match && match[1]) {
+                            const inside = match[1].trim();
+                            if (['İZMİR', 'IZMIR', 'ANTALYA', 'MUĞLA', 'MUGLA', 'ADANA', 'BURSA', 'İSTANBUL', 'ISTANBUL', 'TRABZON'].includes(inside)) {
+                                return true;
+                            }
+                        }
+                        return false;
+                    };
+
+                    // Compute statistics for each person
+                    const personStats = targetP.map(p => {
+                        let planliGorev = 0;
+                        let plansizGorev = 0;
+                        let bekleme = 0;
+                        let mesai = 0;
+                        let fmi = 0;
+                        let yi = 0;
+                        let gi = 0;
+                        let diger = 0;
+
+                        days.forEach(d => {
+                            const dStr = normalizeDate(d);
+                            if ((p.activeUntil && dStr > p.activeUntil) || (p.activeFrom && dStr < p.activeFrom)) {
+                                return;
+                            }
+
+                            const r = freshRecs.find(x => x.personId === p.id && x.date === dStr && x.status && x.status !== '');
+                            if (r) {
+                                const st = r.status;
+                                const noteUpper = (r.note || '').toLocaleUpperCase('tr-TR').trim();
+                                const locUpper = (r.dutyLocation || '').toLocaleUpperCase('tr-TR').trim();
+
+                                if (
+                                    st === 'Bekleme' || st === 'BEKLEME' ||
+                                    (st === AttendanceStatus.OTHER && (noteUpper.includes('BEKLEME') || !r.note || r.note.trim() === '')) ||
+                                    noteUpper.includes('BEKLEME') ||
+                                    locUpper.includes('BEKLEME')
+                                ) {
+                                    bekleme += 1;
+                                } else if (st === AttendanceStatus.DUTY || st === AttendanceStatus.COURSE) {
+                                    if (st === AttendanceStatus.COURSE || (r.dutyLocation && r.dutyLocation.toLocaleUpperCase('tr-TR').includes('KURS'))) {
+                                        diger += 1;
+                                    } else if ((r.dutyType || DutyType.PLANNED) === DutyType.UNPLANNED) {
+                                        plansizGorev += 1;
+                                    } else {
+                                        planliGorev += 1;
+                                    }
+                                } else if (st === AttendanceStatus.PRESENT) {
+                                    mesai += 1;
+                                } else if (st === AttendanceStatus.LEAVE) {
+                                    const lt = r.leaveType || '';
+                                    if (lt === LeaveType.OVERTIME || lt === 'F.M.İ' || lt === 'FMİ') {
+                                        fmi += 1;
+                                    } else if (lt === LeaveType.HALF_OVERTIME || lt === 'Y.F.M.İ' || lt === 'YFMİ') {
+                                        fmi += 0.5;
+                                        mesai += 0.5;
+                                    } else if (lt === LeaveType.ANNUAL || lt === 'Yİ' || lt === 'Y.İ') {
+                                        yi += 1;
+                                    } else if (lt === LeaveType.DAILY || lt === 'G.İ' || lt === 'Gİ') {
+                                        gi += 1;
+                                    } else if (lt === LeaveType.HALF_DAY || lt === 'Y.G.İ' || lt === 'YGİ') {
+                                        gi += 0.5;
+                                        mesai += 0.5;
+                                    } else if (lt === LeaveType.EXCUSE || lt === 'M.İ' || lt === 'Mİ') {
+                                        gi += 1;
+                                    } else if (lt.includes('ÖLÜM') || lt.includes('EVLİLİK') || lt.includes('REFAKATÇİ')) {
+                                        diger += 1;
+                                    } else {
+                                        gi += 1;
+                                    }
+                                } else if (st === AttendanceStatus.PUBLIC_HOLIDAY) {
+                                    diger += 1;
+                                } else if (st === AttendanceStatus.SICK || st === AttendanceStatus.HOSPITAL || st === AttendanceStatus.OTHER || st === AttendanceStatus.ABSENT) {
+                                    diger += 1;
+                                } else {
+                                    mesai += 1;
+                                }
+                            } else {
+                                mesai += 1;
+                            }
+                        });
+
+                        const toplamGorev = planliGorev + plansizGorev + bekleme + mesai;
+                        const toplamIzin = fmi + yi + gi + diger;
+                        const totalAll = toplamGorev + toplamIzin;
+                        const izinPct = totalAll > 0 ? Math.round((toplamIzin / totalAll) * 100) : 0;
+                        const gorevPct = totalAll > 0 ? (100 - izinPct) : 0;
+                        const oranText = totalAll > 0 ? `${izinPct}% İZİN-%${gorevPct} GÖREV` : '-';
+
+                        const u = fUK(p);
+                        let fleetGroup = u;
+                        if (u === 'BELL-429') {
+                            fleetGroup = isBellTasra(p) ? 'BELL-429 (TAŞRA)' : 'BELL-429 (MERKEZ)';
+                        }
+
+                        return {
+                            person: p,
+                            fleet: u,
+                            fleetGroup,
+                            isTasra: isBellTasra(p),
+                            isExcluded: statExcludedPersonIds.includes(p.id),
+                            planliGorev,
+                            plansizGorev,
+                            bekleme,
+                            mesai,
+                            toplamGorev,
+                            fmi,
+                            yi,
+                            gi,
+                            diger,
+                            toplamIzin,
+                            oranText,
+                            izinPct,
+                            gorevPct
+                        };
+                    });
+
+                    // Create Workbook
+                    const workbook = new ExcelJS.Workbook();
+                    workbook.creator = 'OGM Uçuş İşletme';
+                    workbook.created = new Date();
+
+                    const thinBorder = {
+                        top: { style: 'thin', color: { argb: 'FF000000' } },
+                        left: { style: 'thin', color: { argb: 'FF000000' } },
+                        bottom: { style: 'thin', color: { argb: 'FF000000' } },
+                        right: { style: 'thin', color: { argb: 'FF000000' } }
+                    };
+                    const mediumBorder = {
+                        top: { style: 'medium', color: { argb: 'FF000000' } },
+                        left: { style: 'medium', color: { argb: 'FF000000' } },
+                        bottom: { style: 'medium', color: { argb: 'FF000000' } },
+                        right: { style: 'medium', color: { argb: 'FF000000' } }
+                    };
+                    const greyFill = {
+                        type: 'pattern',
+                        pattern: 'solid',
+                        fgColor: { argb: 'FFD9D9D9' }
+                    };
+
+                    // ==========================================
+                    // 1. SAYFA: GENEL ÖZET (Matching Image 2)
+                    // ==========================================
+                    const summarySheet = workbook.addWorksheet('Genel Özet', {
+                        views: [{ showGridLines: true }]
+                    });
+                    summarySheet.columns = [
+                        { key: 'filo', width: 22 },
+                        { key: 'planli', width: 16 },
+                        { key: 'plansiz', width: 16 },
+                        { key: 'bekleme', width: 14 },
+                        { key: 'mesai', width: 14 },
+                        { key: 'toplamGorev', width: 14 },
+                        { key: 'fmi', width: 12 },
+                        { key: 'yi', width: 12 },
+                        { key: 'gimi', width: 12 },
+                        { key: 'diger', width: 12 },
+                        { key: 'toplamIzin', width: 14 },
+                        { key: 'oran', width: 24 },
+                        { key: 'toplamGun', width: 14 },
+                        { key: 'durumAciklama', width: 95 }
+                    ];
+
+                    // Row 1: Title (Red bold font)
+                    summarySheet.getRow(1).height = 32;
+                    summarySheet.mergeCells('A1:N1');
+                    const titleCell = summarySheet.getCell('A1');
+                    titleCell.value = `${dateTitleRange} UÇUŞ EKİPLERİ DURUM ÇİZELGESİ (DÖNEM: ${totalPeriodDays} GÜN)`;
+                    titleCell.font = { name: 'Calibri', size: 13, bold: true, color: { argb: 'FFC00000' } };
+                    titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+                    for (let c = 1; c <= 14; c++) {
+                        summarySheet.getRow(1).getCell(c).border = mediumBorder;
+                    }
+
+                    // Row 2: Group Headers
+                    summarySheet.getRow(2).height = 22;
+                    summarySheet.mergeCells('B2:F2');
+                    const gorevGroupCell = summarySheet.getCell('B2');
+                    gorevGroupCell.value = 'MESAİ-GÖREV-BEKLEME';
+                    gorevGroupCell.font = { name: 'Calibri', size: 11, bold: true };
+                    gorevGroupCell.alignment = { horizontal: 'center', vertical: 'middle' };
+
+                    summarySheet.mergeCells('G2:K2');
+                    const izinGroupCell = summarySheet.getCell('G2');
+                    izinGroupCell.value = 'İZİN VE DİĞER DURUMLAR';
+                    izinGroupCell.font = { name: 'Calibri', size: 11, bold: true };
+                    izinGroupCell.alignment = { horizontal: 'center', vertical: 'middle' };
+
+                    summarySheet.mergeCells('L2:N2');
+                    const evalGroupCell = summarySheet.getCell('L2');
+                    evalGroupCell.value = 'GENEL DEĞERLENDİRME VE TOPLAM GÜN';
+                    evalGroupCell.font = { name: 'Calibri', size: 11, bold: true };
+                    evalGroupCell.alignment = { horizontal: 'center', vertical: 'middle' };
+
+                    for (let c = 1; c <= 14; c++) {
+                        summarySheet.getRow(2).getCell(c).border = thinBorder;
+                    }
+
+                    // Row 3: Sub Headers
+                    summarySheet.getRow(3).height = 24;
+                    const headersSummary = [
+                        'FİLO', 'PLANLI GÖREV', 'PLANSIZ GÖREV', 'BEKLEME', 'MESAİ', 'TOPLAM',
+                        'FMİ', 'Yİ', 'Gİ/Mİ', 'DİĞER', 'TOPLAM', 'GÖREV/İZİN ORANI', 'TOPLAM GÜN', 'DURUM / AÇIKLAMA'
+                    ];
+                    headersSummary.forEach((h, idx) => {
+                        const cell = summarySheet.getRow(3).getCell(idx + 1);
+                        cell.value = h;
+                        cell.font = { name: 'Calibri', size: 10, bold: true };
+                        cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+                        cell.border = thinBorder;
+                        if (idx + 1 === 6 || idx + 1 === 11) {
+                            cell.fill = greyFill;
+                        }
+                    });
+
+                    // Balanced Rounding Helper (Hamilton / Largest Remainder Method)
+                    const getBalancedAverages = (list, periodDays) => {
+                        const count = list.length;
+                        if (count === 0) {
+                            return {
+                                avgPlanli: 0, avgPlansiz: 0, avgBekleme: 0, avgMesai: 0,
+                                avgToplamGorev: 0, avgFmi: 0, avgYi: 0, avgGi: 0, avgDiger: 0,
+                                avgToplamIzin: 0, avgToplamGun: 0, oranText: '', durumAciklama: `Tam Dönem (${periodDays} Gün)`, isWarning: false
+                            };
+                        }
+
+                        const colKeys = ['planliGorev', 'plansizGorev', 'bekleme', 'mesai', 'fmi', 'yi', 'gi', 'diger'];
+                        const priority = { mesai: 10, planliGorev: 9, bekleme: 8, fmi: 7, yi: 6, gi: 5, diger: 4, plansizGorev: 3 };
+
+                        const rawSums = {};
+                        colKeys.forEach(k => {
+                            rawSums[k] = list.reduce((acc, c) => acc + (c[k] || 0), 0);
+                        });
+
+                        const rawAvgs = {};
+                        colKeys.forEach(k => {
+                            rawAvgs[k] = rawSums[k] / count;
+                        });
+
+                        const totalRawSum = Object.values(rawAvgs).reduce((a, b) => a + b, 0);
+                        const targetSum = Math.round(totalRawSum);
+
+                        const floors = {};
+                        const remainders = {};
+                        let floorSum = 0;
+
+                        colKeys.forEach(k => {
+                            floors[k] = Math.floor(rawAvgs[k]);
+                            remainders[k] = rawAvgs[k] - floors[k];
+                            floorSum += floors[k];
+                        });
+
+                        let kNeeded = targetSum - floorSum;
+
+                        const items = colKeys.map(k => ({
+                            key: k,
+                            rem: remainders[k],
+                            prio: priority[k] || 0
+                        }));
+
+                        items.sort((a, b) => {
+                            if (Math.abs(b.rem - a.rem) > 1e-6) {
+                                return b.rem - a.rem;
+                            }
+                            return b.prio - a.prio;
+                        });
+
+                        const result = { ...floors };
+                        for (let i = 0; i < items.length; i++) {
+                            if (kNeeded > 0 && items[i].rem > 1e-6) {
+                                result[items[i].key] += 1;
+                                kNeeded--;
+                            }
+                        }
+
+                        while (kNeeded > 0) {
+                            result[items[0].key] += 1;
+                            kNeeded--;
+                        }
+
+                        const avgPlanli = result.planliGorev;
+                        const avgPlansiz = result.plansizGorev;
+                        const avgBekleme = result.bekleme;
+                        const avgMesai = result.mesai;
+                        const avgFmi = result.fmi;
+                        const avgYi = result.yi;
+                        const avgGi = result.gi;
+                        const avgDiger = result.diger;
+
+                        const avgToplamGorev = avgPlanli + avgPlansiz + avgBekleme + avgMesai;
+                        const avgToplamIzin = avgFmi + avgYi + avgGi + avgDiger;
+                        const avgToplamGun = avgToplamGorev + avgToplamIzin;
+
+                        const totalAll = avgToplamGun;
+                        const izinPct = totalAll > 0 ? Math.round((avgToplamIzin / totalAll) * 100) : 0;
+                        const gorevPct = totalAll > 0 ? (100 - izinPct) : 0;
+                        const oranText = totalAll > 0 ? `${izinPct}% İZİN-%${gorevPct} GÖREV` : '';
+
+                        let durumAciklama = `Tam Dönem (${periodDays} Gün)`;
+                        let isWarning = false;
+                        if (avgToplamGun < periodDays) {
+                            durumAciklama = `* Dönem içi katılan/ayrılan var (Ort. Gün: ${avgToplamGun} / Hedef: ${periodDays})`;
+                            isWarning = true;
+                        }
+
+                        return {
+                            avgPlanli, avgPlansiz, avgBekleme, avgMesai,
+                            avgToplamGorev, avgFmi, avgYi, avgGi, avgDiger,
+                            avgToplamIzin, avgToplamGun, oranText, durumAciklama, isWarning
+                        };
+                    };
+
+                    // Fleets in order from Image 2
+                    const summaryFleets = ['AT-802', 'T-70', 'BELL-429 (MERKEZ)', 'BELL-429 (TAŞRA)', 'B-360', 'C-650'];
+
+                    summaryFleets.forEach((fleetName, fIdx) => {
+                        // Exclude personnel chosen for exclusion from average calculation
+                        const activeList = personStats.filter(st => st.fleetGroup === fleetName && !st.isExcluded);
+                        const allList = personStats.filter(st => st.fleetGroup === fleetName);
+                        const list = activeList.length > 0 ? activeList : allList;
+
+                        const {
+                            avgPlanli, avgPlansiz, avgBekleme, avgMesai,
+                            avgToplamGorev, avgFmi, avgYi, avgGi, avgDiger,
+                            avgToplamIzin, avgToplamGun, oranText, durumAciklama, isWarning
+                        } = getBalancedAverages(list, totalPeriodDays);
+
+                        const rowNumber = 4 + fIdx;
+                        const row = summarySheet.getRow(rowNumber);
+                        row.height = 22;
+                        row.getCell(1).value = fleetName;
+                        row.getCell(1).font = { name: 'Calibri', size: 10, bold: true };
+                        row.getCell(1).alignment = { horizontal: 'left', vertical: 'middle', indent: 1 };
+
+                        const values = [
+                            avgPlanli, avgPlansiz, avgBekleme, avgMesai, avgToplamGorev,
+                            avgFmi, avgYi, avgGi, avgDiger, avgToplamIzin,
+                            oranText, avgToplamGun, durumAciklama
+                        ];
+                        values.forEach((v, vIdx) => {
+                            const colIdx = vIdx + 2;
+                            const cell = row.getCell(colIdx);
+                            cell.value = v;
+                            cell.font = { 
+                                name: 'Calibri', 
+                                size: 10, 
+                                bold: (colIdx === 6 || colIdx === 11 || colIdx === 13 || (colIdx === 14 && isWarning)),
+                                italic: (colIdx === 14 && isWarning),
+                                color: (colIdx === 14 && isWarning) ? { argb: 'FFC00000' } : { argb: 'FF000000' }
+                            };
+                            cell.alignment = { horizontal: colIdx === 14 ? 'left' : 'center', vertical: 'middle' };
+                            if (colIdx === 6 || colIdx === 11) {
+                                cell.fill = greyFill;
+                            }
+                        });
+
+                        for (let c = 1; c <= 14; c++) {
+                            row.getCell(c).border = thinBorder;
+                        }
+                    });
+
+                    // Red note row if any personnel are excluded from stats
+                    let lastSummaryRowIdx = 4 + summaryFleets.length;
+                    const overallExcluded = personStats.filter(st => st.isExcluded);
+                    if (overallExcluded.length > 0) {
+                        lastSummaryRowIdx++;
+                        summarySheet.mergeCells(`A${lastSummaryRowIdx}:N${lastSummaryRowIdx}`);
+                        const noteCell = summarySheet.getCell(`A${lastSummaryRowIdx}`);
+                        const excludedStr = overallExcluded.map(st => `${st.person.fullName} (${st.fleetGroup})`).join(', ');
+                        noteCell.value = `* NOT: ${excludedStr} birim ortalamasına dahil edilmemiştir.`;
+                        noteCell.font = { name: 'Calibri', size: 10, bold: true, italic: true, color: { argb: 'FFFF0000' } };
+                        noteCell.alignment = { horizontal: 'left', vertical: 'middle', indent: 1 };
+                        summarySheet.getRow(lastSummaryRowIdx).height = 24;
+                    }
+
+                    // Explanatory Information Section below Genel Özet (Matching Image 1)
+                    lastSummaryRowIdx += 2;
+                    summarySheet.mergeCells(`A${lastSummaryRowIdx}:N${lastSummaryRowIdx}`);
+                    const infoTitleCell = summarySheet.getCell(`A${lastSummaryRowIdx}`);
+                    infoTitleCell.value = 'BİLGİLENDİRME: Bu rapor Yoklama Takip Sisteminden alınan veriler ile otomatik oluşturulmuştur.';
+                    infoTitleCell.font = { name: 'Calibri', size: 11, bold: true, color: { argb: 'FF0070C0' } };
+                    infoTitleCell.alignment = { horizontal: 'left', vertical: 'middle' };
+                    summarySheet.getRow(lastSummaryRowIdx).height = 24;
+                    lastSummaryRowIdx++;
+
+                    const explanations = [
+                        '• PLANLI GÖREV: Yoklama Takip Sisteminde görev türü Planlı olarak girilen görev günleri.',
+                        '• PLANSIZ GÖREV: Yoklama Takip Sisteminde görev türü Plansız (Acil/Yangın/Sondaj vb.) olarak girilen görev günleri.',
+                        '• BEKLEME: Yoklama durumu veya açıklamasında Bekleme kaydı olan günler.',
+                        '• MESAİ: Normal mesai (X), görevsel toplantılar (D-OGM, D-SSB TOPLANTI) ile yarım izinlerin mesai payları.',
+                        '• FMİ / Yİ / Gİ/Mİ: Fazla Mesai İzinleri (FMİ), Yıllık İzinler (Yİ), Günlük İzin (G.İ) ve Mazeret İzinleri (M.İ).',
+                        '• DİĞER: İdari İzin (Resmi Tatil, Bayram vb.), D-Muayene (Hastane), Ölüm İzni, Evlilik İzni, Refakatçi İzni, P.Yok (Personel Yok), Kurs, Rapor, Hastane ve Yok günleri.',
+                        `• TOPLAM GÜN: Personelin aktif çalıştığı dönemin (Mesai-Görev-Bekleme + İzin ve Diğer) toplam gün sayısıdır (Seçilen Dönem Hedefi: ${totalPeriodDays} Gün).`
+                    ];
+
+                    explanations.forEach(exp => {
+                        summarySheet.mergeCells(`A${lastSummaryRowIdx}:N${lastSummaryRowIdx}`);
+                        const expCell = summarySheet.getCell(`A${lastSummaryRowIdx}`);
+                        expCell.value = exp;
+                        expCell.font = { name: 'Calibri', size: 9.5, italic: true };
+                        expCell.alignment = { horizontal: 'left', vertical: 'middle' };
+                        summarySheet.getRow(lastSummaryRowIdx).height = 20;
+                        lastSummaryRowIdx++;
+                    });
+
+                    // ==========================================
+                    // 2. FİLO BAZLI AYRI SAYFALAR (BELL-429, AT-802, T-70, B-360, C-650)
+                    // ==========================================
+                    const fleetSheets = ['BELL-429', 'AT-802', 'T-70', 'B-360', 'C-650'];
+
+                    fleetSheets.forEach(fleetKey => {
+                        const fleetPersonStats = personStats.filter(st => st.fleet === fleetKey);
+                        const sheet = workbook.addWorksheet(fleetKey, {
+                            views: [{ showGridLines: true }]
+                        });
+
+                        sheet.columns = [
+                            { key: 'sira', width: 8 },
+                            { key: 'ad', width: 32 },
+                            { key: 'unvan', width: 24 },
+                            { key: 'planli', width: 16 },
+                            { key: 'plansiz', width: 16 },
+                            { key: 'bekleme', width: 14 },
+                            { key: 'mesai', width: 14 },
+                            { key: 'toplamGorev', width: 14 },
+                            { key: 'fmi', width: 12 },
+                            { key: 'yi', width: 12 },
+                            { key: 'gimi', width: 12 },
+                            { key: 'diger', width: 12 },
+                            { key: 'toplamIzin', width: 14 },
+                            { key: 'oran', width: 24 },
+                            { key: 'toplamGun', width: 14 },
+                            { key: 'durumAciklama', width: 95 }
+                        ];
+
+                        // Row 1: Title (Red bold font)
+                        sheet.getRow(1).height = 30;
+                        sheet.mergeCells('A1:P1');
+                        const fTitle = sheet.getCell('A1');
+                        fTitle.value = `${dateTitleRange} ${fleetKey} FİLOSU PERSONEL DURUM ÇİZELGESİ (DÖNEM: ${totalPeriodDays} GÜN)`;
+                        fTitle.font = { name: 'Calibri', size: 13, bold: true, color: { argb: 'FFC00000' } };
+                        fTitle.alignment = { horizontal: 'center', vertical: 'middle' };
+                        for (let c = 1; c <= 16; c++) {
+                            sheet.getRow(1).getCell(c).border = mediumBorder;
+                        }
+
+                        // Row 2: Group Header
+                        sheet.getRow(2).height = 22;
+                        sheet.mergeCells('D2:H2');
+                        const fGorevCell = sheet.getCell('D2');
+                        fGorevCell.value = 'MESAİ-GÖREV-BEKLEME';
+                        fGorevCell.font = { name: 'Calibri', size: 11, bold: true };
+                        fGorevCell.alignment = { horizontal: 'center', vertical: 'middle' };
+
+                        sheet.mergeCells('I2:M2');
+                        const fIzinCell = sheet.getCell('I2');
+                        fIzinCell.value = 'İZİN VE DİĞER DURUMLAR';
+                        fIzinCell.font = { name: 'Calibri', size: 11, bold: true };
+                        fIzinCell.alignment = { horizontal: 'center', vertical: 'middle' };
+
+                        sheet.mergeCells('N2:P2');
+                        const fEvalCell = sheet.getCell('N2');
+                        fEvalCell.value = 'GENEL DEĞERLENDİRME VE TOPLAM GÜN';
+                        fEvalCell.font = { name: 'Calibri', size: 11, bold: true };
+                        fEvalCell.alignment = { horizontal: 'center', vertical: 'middle' };
+
+                        for (let c = 1; c <= 16; c++) {
+                            sheet.getRow(2).getCell(c).border = thinBorder;
+                        }
+
+                        // Row 3: Column Headers
+                        sheet.getRow(3).height = 24;
+                        const fHeaders = [
+                            'SIRA', 'AD SOYADI', 'UNVAN',
+                            'PLANLI GÖREV', 'PLANSIZ GÖREV', 'BEKLEME', 'MESAİ', 'TOPLAM',
+                            'FMİ', 'Yİ', 'Gİ/Mİ', 'DİĞER', 'TOPLAM', 'GÖREV/İZİN ORANI', 'TOPLAM GÜN', 'DURUM / AÇIKLAMA'
+                        ];
+                        fHeaders.forEach((h, idx) => {
+                            const cell = sheet.getRow(3).getCell(idx + 1);
+                            cell.value = h;
+                            cell.font = { name: 'Calibri', size: 10, bold: true };
+                            cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+                            cell.border = thinBorder;
+                            if (idx + 1 === 8 || idx + 1 === 13) {
+                                cell.fill = greyFill;
+                            }
+                        });
+
+                        let currentRow = 4;
+
+                        const renderPersonnelRows = (list, groupTitle = null) => {
+                            if (groupTitle) {
+                                sheet.mergeCells(`A${currentRow}:P${currentRow}`);
+                                const gCell = sheet.getCell(`A${currentRow}`);
+                                gCell.value = groupTitle;
+                                gCell.font = { name: 'Calibri', size: 11, bold: true, color: { argb: 'FFFFFFFF' } };
+                                gCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF2D6A4F' } };
+                                gCell.alignment = { horizontal: 'left', vertical: 'middle', indent: 1 };
+                                sheet.getRow(currentRow).height = 22;
+                                for (let c = 1; c <= 16; c++) {
+                                    sheet.getRow(currentRow).getCell(c).border = thinBorder;
+                                }
+                                currentRow++;
+                            }
+
+                            const visibleList = list.filter(st => !st.isExcluded);
+                            visibleList.forEach((st, idx) => {
+                                const p = st.person;
+                                const row = sheet.getRow(currentRow);
+                                row.height = 20;
+
+                                const totalGun = st.toplamGorev + st.toplamIzin;
+                                let durumAciklama = `Tam Dönem (${totalPeriodDays} Gün)`;
+                                let isSpecialNote = false;
+
+                                if (st.isExcluded) {
+                                    durumAciklama = '* Ortalama Hesabına Dahil Edilmemiştir';
+                                    isSpecialNote = true;
+                                } else if (p.activeUntil && normalizeDate(p.activeUntil) <= eDate) {
+                                    durumAciklama = `* Dönem İçi Ayrılan Personel (${totalGun} / ${totalPeriodDays} Gün) (İLİŞİĞİ KESİLME TARİHİ: ${formatTrDate(p.activeUntil).full})`;
+                                    isSpecialNote = true;
+                                } else if (p.activeFrom && normalizeDate(p.activeFrom) > sDate) {
+                                    durumAciklama = `* Dönem İçi Katılan Personel (${totalGun} / ${totalPeriodDays} Gün) (BAŞLAMA TARİHİ: ${formatTrDate(p.activeFrom).full})`;
+                                    isSpecialNote = true;
+                                }
+
+                                row.getCell(1).value = idx + 1;
+                                row.getCell(2).value = p.fullName || '';
+                                row.getCell(3).value = getDisplayTitle(p.title, p.role);
+                                row.getCell(4).value = st.planliGorev;
+                                row.getCell(5).value = st.plansizGorev;
+                                row.getCell(6).value = st.bekleme;
+                                row.getCell(7).value = st.mesai;
+                                row.getCell(8).value = st.toplamGorev;
+                                row.getCell(9).value = st.fmi;
+                                row.getCell(10).value = st.yi;
+                                row.getCell(11).value = st.gi;
+                                row.getCell(12).value = st.diger;
+                                row.getCell(13).value = st.toplamIzin;
+                                row.getCell(14).value = st.oranText;
+                                row.getCell(15).value = totalGun;
+                                row.getCell(16).value = durumAciklama;
+
+                                row.getCell(1).alignment = { horizontal: 'center', vertical: 'middle' };
+                                row.getCell(2).alignment = { horizontal: 'left', vertical: 'middle', indent: 1 };
+                                row.getCell(3).alignment = { horizontal: 'left', vertical: 'middle', indent: 1 };
+
+                                for (let c = 4; c <= 16; c++) {
+                                    row.getCell(c).alignment = { horizontal: c === 16 ? 'left' : 'center', vertical: 'middle' };
+                                    if (c === 8 || c === 13 || c === 15) {
+                                        row.getCell(c).font = { name: 'Calibri', size: 10, bold: true };
+                                        if (c === 8 || c === 13) row.getCell(c).fill = greyFill;
+                                    }
+                                    if (c === 16 && isSpecialNote) {
+                                        row.getCell(c).font = { name: 'Calibri', size: 9.5, bold: true, italic: true, color: { argb: 'FFC00000' } };
+                                    }
+                                }
+
+                                for (let c = 1; c <= 16; c++) {
+                                    row.getCell(c).border = thinBorder;
+                                }
+                                currentRow++;
+                            });
+                        };
+
+                        if (fleetKey === 'BELL-429') {
+                            const merkezList = fleetPersonStats.filter(st => !st.isTasra);
+                            const tasraList = fleetPersonStats.filter(st => st.isTasra);
+
+                            merkezList.sort((a, b) => (a.person.rank || 999) - (b.person.rank || 999));
+                            tasraList.sort((a, b) => (a.person.rank || 999) - (b.person.rank || 999));
+
+                            renderPersonnelRows(merkezList, 'BELL-429 (MERKEZ)');
+                            renderPersonnelRows(tasraList, 'BELL-429 (TAŞRA)');
+                        } else {
+                            fleetPersonStats.sort((a, b) => (a.person.rank || 999) - (b.person.rank || 999));
+                            renderPersonnelRows(fleetPersonStats, null);
+                        }
+
+                        // Bottom Average Row for Fleet
+                        if (fleetPersonStats.length > 0) {
+                            const activeForAvg = fleetPersonStats.filter(st => !st.isExcluded);
+                            const listForAvg = activeForAvg.length > 0 ? activeForAvg : fleetPersonStats;
+
+                            const {
+                                avgPlanli, avgPlansiz, avgBekleme, avgMesai,
+                                avgToplamGorev, avgFmi, avgYi, avgGi, avgDiger,
+                                avgToplamIzin, avgToplamGun, oranText, durumAciklama: durumAciklamaAvg, isWarning: isWarnAvg
+                            } = getBalancedAverages(listForAvg, totalPeriodDays);
+
+                            const avgRow = sheet.getRow(currentRow);
+                            avgRow.height = 22;
+                            sheet.mergeCells(`A${currentRow}:C${currentRow}`);
+                            const avgLabel = sheet.getCell(`A${currentRow}`);
+                            avgLabel.value = `${fleetKey} FİLO ORTALAMASI`;
+                            avgLabel.font = { name: 'Calibri', size: 10, bold: true };
+                            avgLabel.alignment = { horizontal: 'center', vertical: 'middle' };
+
+                            const avgValues = [
+                                avgPlanli, avgPlansiz, avgBekleme, avgMesai, avgToplamGorev,
+                                avgFmi, avgYi, avgGi, avgDiger, avgToplamIzin,
+                                oranText, avgToplamGun, durumAciklamaAvg
+                            ];
+                            avgValues.forEach((v, vIdx) => {
+                                const cell = avgRow.getCell(vIdx + 4);
+                                cell.value = v;
+                                cell.font = { 
+                                    name: 'Calibri', 
+                                    size: 10, 
+                                    bold: true,
+                                    italic: (vIdx + 4 === 16 && isWarnAvg),
+                                    color: (vIdx + 4 === 16 && isWarnAvg) ? { argb: 'FFC00000' } : { argb: 'FF000000' }
+                                };
+                                cell.alignment = { horizontal: (vIdx + 4 === 16) ? 'left' : 'center', vertical: 'middle' };
+                            });
+
+                            for (let c = 1; c <= 16; c++) {
+                                avgRow.getCell(c).border = thinBorder;
+                                avgRow.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8E8E8' } };
+                            }
+                            currentRow++;
+                        }
+
+                        // KULLANICI KURALI: Tablo altına kırmızı yazı ile "* NOT: [Kişi] birim ortalamasına dahil edilmemiştir." yazılır
+                        const fleetExcluded = fleetPersonStats.filter(st => st.isExcluded);
+                        if (fleetExcluded.length > 0) {
+                            const noteRowIdx = currentRow + 1;
+                            sheet.mergeCells(`A${noteRowIdx}:P${noteRowIdx}`);
+                            const noteCell = sheet.getCell(`A${noteRowIdx}`);
+                            const excludedNames = fleetExcluded.map(st => st.person.fullName).join(', ');
+                            noteCell.value = `* NOT: ${excludedNames} birim ortalamasına dahil edilmemiştir.`;
+                            noteCell.font = { name: 'Calibri', size: 10, bold: true, italic: true, color: { argb: 'FFFF0000' } }; // KIRMIZI YAZI
+                            noteCell.alignment = { horizontal: 'left', vertical: 'middle', indent: 1 };
+                            sheet.getRow(noteRowIdx).height = 24;
+                        }
+                    });
+
+                    // Download File
+                    const buffer = await workbook.xlsx.writeBuffer();
+                    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+                    const link = document.createElement('a');
+                    link.href = URL.createObjectURL(blob);
+                    link.download = `Istatistik_Raporu_${sDate}_${eDate}.xlsx`;
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    URL.revokeObjectURL(link.href);
+                } catch (e) {
+                    console.error("İstatistik raporu hatası:", e);
+                    alert("İstatistik raporu oluşturulurken hata meydana geldi: " + (e.message || e));
+                } finally {
+                    setLoading(false);
+                }
+            };
+
             const renderPersonRow = (p, i) => {
                 const s = att[p.id] || {};
                 const isWeeklyMode = rangeStartDate !== rangeEndDate;
@@ -5133,7 +5856,7 @@
                                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
                                      <div>
                                         <label className="text-xs text-forest-400 block mb-1">Birim Seçimi</label>
-                                        <select className="w-full bg-forest-950 border border-forest-600 text-white rounded p-2 text-sm" value={reportUnit} onChange={(e) => setReportUnit(e.target.value)}><option value="TÜM BİRİMLER">TÜM BİRİMLER</option><option value="YÖNETİM">YÖNETİM</option>{models.filter(m => m !== 'İDARİ BİRİM' && m !== 'İDARİ').map(m => <option key={m} value={m}>{m}</option>)}</select>
+                                        <select className="w-full bg-forest-950 border border-forest-600 text-white rounded p-2 text-sm" value={reportUnit} onChange={(e) => setReportUnit(e.target.value)}><option value="TÜM BİRİMLER">TÜM BİRİMLER</option>{models.map(m => <option key={m} value={m}>{m}</option>)}</select>
                                      </div>
                                      <div>
                                         <label className="text-xs text-forest-400 block mb-1">Personel Arama</label>
@@ -5142,11 +5865,132 @@
                                 </div>
                                 <h3 className="text-forest-100 font-semibold mb-2 flex items-center gap-2 text-sm"><CalendarDays className="text-forest-400" size={16} /> Tarih Aralığı</h3>
                                 <div className="flex flex-wrap items-end gap-4">
-                                    <div><label className="text-xs text-forest-400">Başlangıç</label><input type="date" value={dates.start} onChange={e => { setDates({ ...dates, start: e.target.value }); setIsReportReady(false) }} className="bg-forest-950 border border-forest-600 text-white rounded p-2 text-sm" /></div>
-                                    <div><label className="text-xs text-forest-400">Bitiş</label><input type="date" value={dates.end} onChange={e => { setDates({ ...dates, end: e.target.value }); setIsReportReady(false) }} className="bg-forest-950 border border-forest-600 text-white rounded p-2 text-sm" /></div>
+                                    <div><label className="text-xs text-forest-400 block mb-1">Başlangıç</label><input type="date" value={dates.start} onChange={e => { setDates({ ...dates, start: e.target.value }); setIsReportReady(false) }} className="bg-forest-950 border border-forest-600 text-white rounded p-2 text-sm" /></div>
+                                    <div><label className="text-xs text-forest-400 block mb-1">Bitiş</label><input type="date" value={dates.end} onChange={e => { setDates({ ...dates, end: e.target.value }); setIsReportReady(false) }} className="bg-forest-950 border border-forest-600 text-white rounded p-2 text-sm" /></div>
                                     <Button onClick={() => exportExcel(false)} variant="success">Rapor İndir (EXCEL)</Button>
-                                    <div className="h-8 w-px bg-forest-600 mx-2"></div>
-                                    <Button onClick={() => exportExcel(true)} className="bg-blue-600 hover:bg-blue-500">Günlük Rapor İndir (BUGÜN)</Button>
+                                    <div className="h-8 w-px bg-forest-600 mx-2 hidden md:block"></div>
+                                    <Button onClick={exportStatisticsExcel} className="bg-blue-600 hover:bg-blue-500 flex items-center gap-1.5 shadow-md"><FileText size={16} /> İstatistik Raporu İndir</Button>
+                                </div>
+
+                                {/* İstatistiğe Dahil Edilmeyecekler (Ortalama Dışı) Bölümü */}
+                                <div className="mt-4 pt-4 border-t border-forest-700/70 bg-forest-950/40 p-4 rounded-xl border border-forest-700">
+                                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2.5">
+                                        <div className="flex items-center gap-2">
+                                            <UserMinus size={16} className="text-amber-400" />
+                                            <span className="text-xs sm:text-sm font-semibold text-amber-300">
+                                                İstatistik Ortalamasına Dahil Edilmeyecekler
+                                            </span>
+                                            {statExcludedPersonIds.length > 0 && (
+                                                <span className="bg-red-500/20 text-red-300 border border-red-500/40 text-[11px] px-2 py-0.5 rounded-full font-bold">
+                                                    {statExcludedPersonIds.length} Kişi Çıkarıldı
+                                                </span>
+                                            )}
+                                        </div>
+                                        {statExcludedPersonIds.length > 0 && (
+                                            <button 
+                                                type="button" 
+                                                onClick={() => setStatExcludedPersonIds([])} 
+                                                className="text-xs text-red-400 hover:text-red-300 underline font-medium self-start sm:self-auto transition-colors"
+                                            >
+                                                Tümünü Temizle (Sıfırla)
+                                            </button>
+                                        )}
+                                    </div>
+
+                                    <div className="flex flex-col md:flex-row gap-3 items-stretch md:items-center">
+                                        <div className="relative flex-1 max-w-md">
+                                            <input 
+                                                type="text" 
+                                                list="stat-exclude-personnel-list" 
+                                                placeholder="İsim veya birim yazıp seçin (örn: Ahmet Yılmaz)..." 
+                                                className="w-full bg-forest-950 border border-amber-600/60 text-white rounded-lg p-2 text-xs md:text-sm focus:border-amber-400 focus:outline-none placeholder-forest-500"
+                                                value={statExcludeInput}
+                                                onChange={(e) => {
+                                                    const val = e.target.value;
+                                                    const found = allPersonnel.find(p => {
+                                                        const uStr = `${p.fullName} (${p.unit || ''})`.toLocaleUpperCase('tr-TR');
+                                                        const fStr = (p.fullName || '').toLocaleUpperCase('tr-TR');
+                                                        const searchVal = val.toLocaleUpperCase('tr-TR').trim();
+                                                        return uStr === searchVal || fStr === searchVal;
+                                                    });
+                                                    if (found) {
+                                                        if (!statExcludedPersonIds.includes(found.id)) {
+                                                            setStatExcludedPersonIds(prev => [...prev, found.id]);
+                                                        }
+                                                        setStatExcludeInput('');
+                                                    } else {
+                                                        setStatExcludeInput(val);
+                                                    }
+                                                }}
+                                                onKeyDown={(e) => {
+                                                    if (e.key === 'Enter') {
+                                                        e.preventDefault();
+                                                        const val = statExcludeInput.trim();
+                                                        if (!val) return;
+                                                        const found = allPersonnel.find(p => {
+                                                            const uStr = `${p.fullName} (${p.unit || ''})`.toLocaleUpperCase('tr-TR');
+                                                            const fStr = (p.fullName || '').toLocaleUpperCase('tr-TR');
+                                                            const searchVal = val.toLocaleUpperCase('tr-TR');
+                                                            return uStr === searchVal || fStr === searchVal || fStr.includes(searchVal);
+                                                        });
+                                                        if (found) {
+                                                            if (!statExcludedPersonIds.includes(found.id)) {
+                                                                setStatExcludedPersonIds(prev => [...prev, found.id]);
+                                                            }
+                                                            setStatExcludeInput('');
+                                                        }
+                                                    }
+                                                }}
+                                            />
+                                            <datalist id="stat-exclude-personnel-list">
+                                                {allPersonnel
+                                                    .filter(p => !statExcludedPersonIds.includes(p.id) && (p.unit || '').toLocaleUpperCase('tr-TR') !== 'İDARİ')
+                                                    .map(p => (
+                                                        <option key={p.id} value={`${p.fullName} (${p.unit || ''})`} />
+                                                    ))}
+                                            </datalist>
+                                        </div>
+                                        <span className="text-[11px] text-forest-300 italic">
+                                            * Seçilen personeller birim ortalama hesabından hariç tutulur ve raporda tablo altında kırmızı not olarak yazılır.
+                                        </span>
+                                    </div>
+
+                                    {/* Seçilen Kişilerin Rozetleri (Chips) */}
+                                    {statExcludedPersonIds.length > 0 && (
+                                        <div className="flex flex-wrap gap-2 mt-3 pt-2.5 border-t border-forest-800">
+                                            {statExcludedPersonIds.map(id => {
+                                                const person = allPersonnel.find(p => p.id === id);
+                                                if (!person) return null;
+                                                return (
+                                                    <span 
+                                                        key={id} 
+                                                        className="inline-flex items-center gap-1.5 bg-red-950/70 border border-red-500/60 text-red-200 text-xs px-2.5 py-1 rounded-md shadow-sm"
+                                                    >
+                                                        <span className="font-semibold">{person.fullName}</span>
+                                                        <span className="text-[10px] text-red-400 font-normal">
+                                                            ({person.unit || (person.title ? (function(){
+                                                                const t = person.title.toLocaleUpperCase('tr-TR');
+                                                                if (t.includes('BELL')) return 'BELL-429';
+                                                                if (t.includes('AT-802')) return 'AT-802';
+                                                                if (t.includes('C-650')) return 'C-650';
+                                                                if (t.includes('B-360')) return 'B-360';
+                                                                if (t.includes('T-70')) return 'T-70';
+                                                                return 'Birim Yok';
+                                                            })() : 'Birim Yok')})
+                                                        </span>
+                                                        <button 
+                                                            type="button"
+                                                            onClick={() => setStatExcludedPersonIds(prev => prev.filter(x => x !== id))}
+                                                            className="hover:bg-red-800/80 p-0.5 rounded text-red-300 hover:text-white transition-colors"
+                                                            title="Ortalamaya Geri Dahil Et"
+                                                        >
+                                                            <X size={13} />
+                                                        </button>
+                                                    </span>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         </div>
